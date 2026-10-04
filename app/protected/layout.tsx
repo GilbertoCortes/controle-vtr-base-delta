@@ -1,10 +1,40 @@
-import { DeployButton } from "@/components/deploy-button";
-import { EnvVarWarning } from "@/components/env-var-warning";
 import { AuthButton } from "@/components/auth-button";
-import { ThemeSwitcher } from "@/components/theme-switcher";
-import { hasEnvVars } from "@/lib/utils";
+import { BackButton } from "@/components/back-button";
+import { getAdminSession } from "@/lib/supabase/admin";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
+
+export const instant = false;
+
+async function AdminUsersLink() {
+  const { isAdmin } = await getAdminSession();
+  if (!isAdmin) return null;
+
+  return (
+    <Link
+      href="/protected/usuarios"
+      className="text-sm font-medium text-[#a9b8b1] transition-colors hover:text-[#f3f4ef]"
+    >
+      GERENCIAR USUÁRIOS
+    </Link>
+  );
+}
+
+async function ActiveAccountContent({ children }: { children: React.ReactNode }) {
+  const { user, isActive } = await getAdminSession();
+  if (!user) redirect("/auth/login");
+
+  if (!isActive) {
+    return (
+      <section className="mx-auto w-full max-w-3xl rounded-md border border-amber-400/30 bg-amber-400/10 p-5 text-center text-sm text-amber-100">
+        Seu acesso ao sistema está desativado. Procure um administrador.
+      </section>
+    );
+  }
+
+  return children;
+}
 
 export default function ProtectedLayout({
   children,
@@ -12,43 +42,35 @@ export default function ProtectedLayout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="min-h-screen flex flex-col items-center">
-      <div className="flex-1 w-full flex flex-col gap-20 items-center">
-        <nav className="w-full flex justify-center border-b border-b-foreground/10 h-16">
-          <div className="w-full max-w-5xl flex justify-between items-center p-3 px-5 text-sm">
-            <div className="flex gap-5 items-center font-semibold">
-              <Link href={"/"}>Next.js Supabase Starter</Link>
-              <div className="flex items-center gap-2">
-                <DeployButton />
-              </div>
-            </div>
-            {!hasEnvVars ? (
-              <EnvVarWarning />
-            ) : (
-              <Suspense>
-                <AuthButton />
-              </Suspense>
-            )}
+    <main className="min-h-svh bg-[#101719] text-[#edf2ef]">
+      <header className="border-b border-white/10 bg-[#141d1d]">
+        <nav className="mx-auto flex h-16 w-full max-w-5xl items-center justify-between px-5 sm:px-8">
+          <span className="text-sm font-semibold text-[#f3f4ef]">
+            Controle de VTR <span className="font-normal text-[#91a19a]">/ Base Delta</span>
+          </span>
+          <div className="flex items-center gap-4">
+            <Suspense fallback={null}>
+              <AdminUsersLink />
+            </Suspense>
+            <Link
+              href="/protected/meu-perfil"
+              className="text-sm text-[#a9b8b1] transition-colors hover:text-[#f3f4ef]"
+            >
+              Meu Perfil
+            </Link>
+            <Suspense>
+              <AuthButton />
+            </Suspense>
           </div>
         </nav>
-        <div className="flex-1 flex flex-col gap-20 max-w-5xl p-5">
-          {children}
-        </div>
-
-        <footer className="w-full flex items-center justify-center border-t mx-auto text-center text-xs gap-8 py-16">
-          <p>
-            Powered by{" "}
-            <a
-              href="https://supabase.com/?utm_source=create-next-app&utm_medium=template&utm_term=nextjs"
-              target="_blank"
-              className="font-bold hover:underline"
-              rel="noreferrer"
-            >
-              Supabase
-            </a>
-          </p>
-          <ThemeSwitcher />
-        </footer>
+      </header>
+      <div className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8 sm:py-10">
+        <Suspense fallback={<p className="py-8 text-center text-sm text-[#a9b8b1]">Carregando...</p>}>
+          <ActiveAccountContent>
+            <BackButton />
+            {children}
+          </ActiveAccountContent>
+        </Suspense>
       </div>
     </main>
   );
