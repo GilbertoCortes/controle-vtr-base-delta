@@ -50,19 +50,19 @@ export function LoginForm({
   return (
     <div
       className={cn(
-        "relative min-h-svh w-full overflow-hidden",
+        "relative min-h-svh w-full overflow-hidden md:bg-[#0b1f33]",
         className,
       )}
       {...props}
     >
-      {/* Background: tela 4 (cenario + logos + titulo), cover, centralizado, sem distorcer */}
+      {/* Background: tela 4. Celular: cover (tela toda). Desktop (md+): contain para mostrar a imagem inteira sem cortar logos/titulo/rodape, com fundo azul-marinho preenchendo as laterais. */}
       <Image
         src="/tela%204.png"
         alt=""
         fill
         priority
         sizes="100vw"
-        className="object-cover object-center"
+        className="object-cover object-center md:object-contain"
         aria-hidden="true"
       />
 
