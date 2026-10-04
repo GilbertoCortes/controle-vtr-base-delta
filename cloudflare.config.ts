@@ -11,6 +11,13 @@ export default defineConfig({
       ASSETS: bindings.assets(),
       IMAGES: bindings.images(),
       VINEXT_KV_CACHE: bindings.kv(),
+      NEXT_PUBLIC_SUPABASE_URL: bindings.text(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!
+      ),
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: bindings.text(
+        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
+      ),
+      SUPABASE_SECRET_KEY: bindings.secret(),
     },
   }),
 });
