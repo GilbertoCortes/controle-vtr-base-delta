@@ -55,9 +55,9 @@ export function LoginForm({
       )}
       {...props}
     >
-      {/* Background: tela 3 (cenario + logos + titulo), cover, centralizado, sem distorcer */}
+      {/* Background: tela 4 (cenario + logos + titulo), cover, centralizado, sem distorcer */}
       <Image
-        src="/tela%203.png"
+        src="/tela%204.png"
         alt=""
         fill
         priority
@@ -67,6 +67,14 @@ export function LoginForm({
       />
 
       <div className="relative flex min-h-svh flex-col px-5 pb-6 pt-5 sm:px-8">
+        {/* Credito abaixo de "BASE DELTA • CENTRO" da imagem, alinhado aos tracos amarelos.
+            Posicionado em % da viewport para acompanhar o background cover em qualquer tela. */}
+        <p
+          className="pointer-events-none absolute left-[8%] right-[8%] top-[62.5%] text-center text-[15px] font-medium leading-snug text-[#eef2f5] [text-shadow:0_1px_4px_rgba(0,0,0,0.65)] sm:text-base"
+        >
+          APP. produzido pelo 3º SGT Gilberto <strong className="font-bold text-[#e8c15a]">Cortes</strong> Silva
+        </p>
+
         {/* Centro: apenas o card de login (logos/titulo/rodape estao na imagem) */}
         {/* justify-end + espacador superior posicionam o card abaixo do subtitulo da imagem, sem sobrepor o logo G/titulo */}
         <main className="flex flex-1 flex-col items-center justify-end pb-[2vh] pt-[50vh] sm:pt-[54vh]">
