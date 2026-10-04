@@ -55,14 +55,24 @@ export function LoginForm({
       )}
       {...props}
     >
-      {/* Background: tela 4. Celular: cover (tela toda). Desktop (md+): contain para mostrar a imagem inteira sem cortar logos/titulo/rodape, com fundo azul-marinho preenchendo as laterais. */}
+      {/* Background mobile: tela 4 (vertical), cover, exatamente como antes. */}
       <Image
         src="/tela%204.png"
         alt=""
         fill
         priority
         sizes="100vw"
-        className="object-cover object-center md:object-contain"
+        className="object-cover object-center md:hidden"
+        aria-hidden="true"
+      />
+      {/* Background desktop/tablet horizontal (md+): tela 4 desktop (paisagem), cover, preenche sem cortar os elementos. */}
+      <Image
+        src="/tela%204%20desktop.png"
+        alt=""
+        fill
+        priority
+        sizes="100vw"
+        className="hidden object-cover object-center md:block"
         aria-hidden="true"
       />
 
@@ -77,9 +87,9 @@ export function LoginForm({
 
         {/* Centro: apenas o card de login (logos/titulo/rodape estao na imagem) */}
         {/* justify-end + espacador superior posicionam o card abaixo do subtitulo da imagem, sem sobrepor o logo G/titulo */}
-        <main className="flex flex-1 flex-col items-center justify-end pb-[2vh] pt-[50vh] sm:pt-[54vh]">
-          {/* Card de login — translateY sobe o card ~120px em relacao a posicao do container */}
-          <div className="w-full max-w-[400px] -translate-y-[120px] rounded-2xl border border-white/12 bg-[#07121c]/[0.82] p-6 shadow-[0_18px_60px_rgba(0,0,0,0.42)] backdrop-blur-sm sm:p-7">
+        <main className="flex flex-1 flex-col items-center justify-end pb-[2vh] pt-[50vh] sm:pt-[54vh] md:justify-end md:pb-0 md:pt-0">
+          {/* Card de login — translateY sobe o card ~120px no celular; no desktop (md+) fica neutro para nao cobrir o credito */}
+          <div className="w-full max-w-[400px] -translate-y-[120px] rounded-2xl border border-white/12 bg-[#07121c]/[0.82] p-6 shadow-[0_18px_60px_rgba(0,0,0,0.42)] backdrop-blur-sm sm:p-7 md:translate-y-0">
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
                 <label htmlFor="email" className="text-sm font-medium text-[#e6edf2]">
