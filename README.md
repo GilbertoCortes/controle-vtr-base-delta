@@ -100,6 +100,29 @@ If you wish to just develop locally and not deploy to Vercel, [follow the steps 
 
 ## Feedback and issues
 
+### PDF no Cloudflare/Vinext
+
+O PDFKit resolve o perfil de cores interno com `new URL(..., import.meta.url)`.
+Como `workerd` não fornece `import.meta.url`, o plugin
+`pdfkit-worker` em `vite.config.ts` substitui essa base por uma URL
+`file:` absoluta durante o build e inclui as mesmas fontes padrão por imports
+estáticos, evitando `createRequire` no Worker. Mantém a versão Node do PDFKit
+e seus streams. A correção se limita ao PDFKit;
+não altera o layout, o download autenticado das fotos no Supabase ou o build
+Next.js.
+
+Validação local com o runtime real `workerd` e respostas simuladas do Supabase
+(sem acessar produção):
+
+```bash
+npm run build:vinext
+node --test tests/registro-pdf-worker.test.mjs
+```
+
+Os testes cobrem PDFs com zero, uma e três fotos, agentes desktop/celular,
+URLs absolutas de download, autenticação e equivalência de fontes, páginas e
+imagens com o gerador Node.
+
 Please file feedback and issues over on the [Supabase GitHub org](https://github.com/supabase/supabase/issues/new/choose).
 
 ## More Supabase examples
