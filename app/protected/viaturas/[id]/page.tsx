@@ -408,7 +408,7 @@ async function ViaturaDetailsContent({
               RECEBER VTR DA OFICINA
             </Link>
           )}
-          {isAdmin && !isArchived && !isBaixada && (
+          {isAdmin && !isArchived && (
             <ArchiveViaturaButton
               isAdmin={isAdmin}
               viaturaId={viatura.id}
