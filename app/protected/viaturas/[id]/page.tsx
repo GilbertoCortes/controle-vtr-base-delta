@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { getAdminSession } from "@/lib/supabase/admin";
-import { ArchiveViaturaButton } from "@/components/archive-viatura-button";
+import { DeleteViaturaButton } from "@/components/delete-viatura-button";
 import { formatPlate } from "@/lib/plate";
 
 type Viatura = {
@@ -12,9 +12,6 @@ type Viatura = {
   tipo: string;
   situacao: string;
   quilometragem: number | null;
-  arquivada: boolean;
-  arquivada_em: string | null;
-  arquivada_por: string | null;
   motivo_situacao: string | null;
 };
 
@@ -134,7 +131,6 @@ function FunctionalProfileDetails({
 
 function formatRegistroType(value: string) {
   if (value === "checkin_inicial") return "Check-in/Entrada de VTR";
-  if (value === "remocao_base") return "Removida da Base Delta";
   if (value === "recebimento") return "Recebida da Oficina";
   return displayValue(value);
 }
@@ -151,7 +147,7 @@ async function ViaturaDetailsContent({
 
   const { data: viaturaData, error: viaturaError } = await supabase
     .from("viaturas")
-    .select("id, placa, tipo, situacao, quilometragem, arquivada, arquivada_em, arquivada_por, motivo_situacao")
+    .select("id, placa, tipo, situacao, quilometragem, motivo_situacao")
     .eq("id", id)
     .maybeSingle();
 
@@ -184,7 +180,6 @@ async function ViaturaDetailsContent({
   const registros = (recordsData ?? []) as unknown as Registro[];
   const responsibleIds = Array.from(new Set([
     ...registros.map((registro) => registro.usuario_id),
-    viatura.arquivada_por,
   ].filter((userId): userId is string => Boolean(userId))));
   const { data: profilesData } = responsibleIds.length
     ? await supabase
@@ -228,8 +223,6 @@ async function ViaturaDetailsContent({
     fotosByRegistroId.set(key, [...(fotosByRegistroId.get(key) ?? []), foto]);
   }
   const situacao = viatura.situacao.trim().toUpperCase();
-  const isArchived = viatura.arquivada === true;
-  const hasArchiveEvent = isArchived && Boolean(viatura.arquivada_em);
   const isAtiva = situacao === "ATIVA";
   const isBaixada = situacao === "BAIXADA";
   const checkinEntrada = [...registros]
@@ -392,7 +385,7 @@ async function ViaturaDetailsContent({
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {isAtiva && !viatura.arquivada && (
+          {isAtiva && (
             <Link
               href={`/protected/viaturas/${viatura.id}/baixa`}
               className="inline-flex min-h-12 items-center justify-center rounded-md border border-[#bd4c4b]/50 bg-[#bd4c4b] px-5 text-sm font-bold text-white transition-colors hover:bg-[#d15d59] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ef9691]"
@@ -400,7 +393,7 @@ async function ViaturaDetailsContent({
               BAIXAR VTR
             </Link>
           )}
-          {isBaixada && !viatura.arquivada && (
+          {isBaixada && (
             <Link
               href={`/protected/viaturas/${viatura.id}/recebimento-oficina`}
               className="inline-flex min-h-12 items-center justify-center rounded-md border border-emerald-500/50 bg-emerald-700 px-5 text-sm font-bold text-white transition-colors hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
@@ -408,8 +401,8 @@ async function ViaturaDetailsContent({
               RECEBER VTR DA OFICINA
             </Link>
           )}
-          {isAdmin && !isArchived && (
-            <ArchiveViaturaButton
+          {isAdmin && (
+            <DeleteViaturaButton
               isAdmin={isAdmin}
               viaturaId={viatura.id}
             />
@@ -503,42 +496,6 @@ async function ViaturaDetailsContent({
           </ol>
         )}
       </section>
-
-      {hasArchiveEvent && viatura.arquivada_em && (
-        <section className="space-y-4">
-          <h2 className="text-xl font-semibold text-[#f3f4ef]">Saída da Base Delta</h2>
-          <article className="space-y-4 rounded-md border border-white/10 bg-[#192222] p-4 sm:p-5">
-            <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <div><dt className="text-xs text-[#91a19a]">Data da retirada</dt><dd className="text-sm text-[#e0e8e3]">{formatEventDate(viatura.arquivada_em)}</dd></div>
-              <div><dt className="text-xs text-[#91a19a]">Hora da retirada</dt><dd className="text-sm text-[#e0e8e3]">{formatEventTime(viatura.arquivada_em)}</dd></div>
-              <div><dt className="text-xs text-[#91a19a]">Placa</dt><dd className="text-sm text-[#e0e8e3]">{formatPlate(viatura.placa)}</dd></div>
-            </dl>
-            <FunctionalProfileDetails
-              profile={viatura.arquivada_por ? profilesById.get(viatura.arquivada_por) : undefined}
-              label="Retirada por"
-            />
-            {viatura.motivo_situacao && (
-              <p className="whitespace-pre-wrap text-sm text-[#e0e8e3]">Observação/motivo: {viatura.motivo_situacao}</p>
-            )}
-            <details className="rounded-md border border-white/10 bg-[#141d1d]">
-              <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-[#f1d989] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#d5b45d]">
-                Detalhes da saída da Base Delta
-              </summary>
-              <div className="space-y-3 border-t border-white/10 p-4">
-                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div><dt className="text-xs text-[#91a19a]">Data e hora</dt><dd className="text-sm text-[#e0e8e3]">{formatEventDate(viatura.arquivada_em)} às {formatEventTime(viatura.arquivada_em)}</dd></div>
-                  <div><dt className="text-xs text-[#91a19a]">Tipo</dt><dd className="text-sm text-[#e0e8e3]">{viatura.tipo}</dd></div>
-                  {viatura.motivo_situacao && <div className="sm:col-span-2"><dt className="text-xs text-[#91a19a]">Observação/motivo</dt><dd className="whitespace-pre-wrap text-sm text-[#e0e8e3]">{viatura.motivo_situacao}</dd></div>}
-                </dl>
-                <FunctionalProfileDetails
-                  profile={viatura.arquivada_por ? profilesById.get(viatura.arquivada_por) : undefined}
-                  label="Retirada por"
-                />
-              </div>
-            </details>
-          </article>
-        </section>
-      )}
 
     </section>
   );

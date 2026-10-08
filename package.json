@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^2.0.0-beta.sha-52b0dc0e9",
+    "@electric-sql/pglite": "^0.5.8",
     "@eslint/eslintrc": "^3",
     "@types/node": "^20",
     "@types/pdfkit": "^0.17.6",

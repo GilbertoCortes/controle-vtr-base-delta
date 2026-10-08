@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
 import { KmRegressionError, kmRegressionMessage } from "@/lib/vtr-km";
+import { rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
 
 const photoBucket = "fotos-vtr";
 const conditionOptions = ["OK", "Ruim"];
@@ -195,25 +196,7 @@ export async function POST(
   }
 
   let registroId: string | number | null = null;
-  const uploadedPaths: string[] = [];
-  const fotoIds: (string | number)[] = [];
-
-  async function rollback() {
-    let rollbackFailed = false;
-    if (fotoIds.length) {
-      const { error } = await supabase.from("fotos_registro_vtr").delete().in("id", fotoIds);
-      if (error) rollbackFailed = true;
-    }
-    if (uploadedPaths.length) {
-      const { error } = await supabase.storage.from(photoBucket).remove(uploadedPaths);
-      if (error) rollbackFailed = true;
-    }
-    if (registroId !== null) {
-      const { error } = await supabase.from("registros_vtr").delete().eq("id", registroId);
-      if (error) rollbackFailed = true;
-    }
-    return !rollbackFailed;
-  }
+  const attemptedPaths: string[] = [];
 
   try {
     const { data: registro, error: registroError } = await supabase
@@ -235,19 +218,18 @@ export async function POST(
 
     for (const photo of photos) {
       const path = `${viatura.id}/${registroId}/${randomUUID()}.${photo.extension}`;
+      attemptedPaths.push(path);
       const { error: uploadError } = await supabase.storage
         .from(photoBucket)
         .upload(path, photo.bytes, { contentType: photo.contentType, upsert: false });
       if (uploadError) throw uploadError;
-      uploadedPaths.push(path);
 
-      const { data: foto, error: fotoError } = await supabase
+      const { error: fotoError } = await supabase
         .from("fotos_registro_vtr")
         .insert({ registro_id: registroId, caminho_storage: path })
         .select("id")
         .single();
       if (fotoError) throw fotoError;
-      fotoIds.push(foto.id);
     }
 
     const { data: baixada, error: updateError } = await supabase
@@ -276,7 +258,7 @@ export async function POST(
       throw new Error("A situação da VTR mudou antes da conclusão da baixa.");
     }
   } catch (error) {
-    const rollbackSucceeded = await rollback();
+    const rollbackSucceeded = await rollbackVtrOperation({ viaturaId: viatura.id, registroId, attemptedPaths });
     if (error instanceof KmRegressionError) {
       console.error("Regressão de quilometragem bloqueada na baixa", { rollbackSucceeded });
       return NextResponse.json({ message: error.message }, { status: 409 });

@@ -100,6 +100,44 @@ If you wish to just develop locally and not deploy to Vercel, [follow the steps 
 
 ## Feedback and issues
 
+### Cadastro de usuários: edição somente administrativa
+
+`/protected/meu-perfil` é somente para consulta, inclusive para administradores.
+Alterações cadastrais são realizadas em **Gerenciar Usuários**. As APIs de
+criação, edição e ativação/desativação verificam sessão de administrador ativo
+antes de usar a chave administrativa, disponível somente no servidor.
+O antigo `PATCH /api/meu-perfil` rejeita alterações com HTTP 403 para sessões
+ativas; sessões inválidas ou desativadas mantêm a rejeição existente.
+
+A política informada do banco, `usuario_atualiza_proprio_perfil`, permitia
+UPDATE quando `id = auth.uid()`. A migration
+[`202610080001_profiles_admin_only_writes.sql`](supabase/migrations/202610080001_profiles_admin_only_writes.sql)
+remove essa política e a política de UPDATE direto de administradores,
+revoga permissões de gravação da tabela e das colunas para clientes públicos
+e autenticados, bloqueia UPDATE via RLS e restringe as versões existentes de
+`guard_admin_update` a `service_role`. Todas as colunas são protegidas, inclusive
+colunas cadastrais adicionadas futuramente. As políticas de SELECT
+`usuario_visualiza_proprio_perfil` e `administrador_visualiza_perfis` não são
+alteradas. Nenhum registro é modificado pela migration.
+
+Aplicar a migration no SQL Editor do Supabase após revisão. **Gerar o arquivo
+não aplica a proteção no banco**: publique o código e aplique o SQL para concluir
+o bloqueio, inclusive de requisições diretas ao Supabase. A chave
+`SUPABASE_SECRET_KEY` deve continuar configurada somente no servidor.
+
+Validação local de interface, autorização e fluxos administrativos com dados
+simulados, além da execução da migration em PostgreSQL isolado em memória
+via PGlite, dependência usada somente nos testes (sem modificar produção):
+
+```bash
+node --test tests/profiles-permissions.test.mjs
+```
+
+Após aplicar a migration, valide com uma sessão real de usuário comum:
+leitura do próprio perfil deve funcionar e `PATCH /rest/v1/profiles?id=eq.<id>`
+deve falhar com permissão negada. Com administrador ativo, valide edição,
+criação e ativação/desativação pelas APIs administrativas do app.
+
 ### PDF no Cloudflare/Vinext
 
 O PDFKit resolve o perfil de cores interno com `new URL(..., import.meta.url)`.
@@ -122,6 +160,113 @@ node --test tests/registro-pdf-worker.test.mjs
 Os testes cobrem PDFs com zero, uma e três fotos, agentes desktop/celular,
 URLs absolutas de download, autenticação e equivalência de fontes, páginas e
 imagens com o gerador Node.
+
+### Retirada definitiva de VTRs
+
+O botão de retirar VTR mantém o acesso exclusivo de ADMIN e pede confirmação:
+“Esta ação excluirá permanentemente esta VTR, todo o seu histórico e todas as
+fotos vinculadas. Esta ação não poderá ser desfeita.”
+`DELETE /api/viaturas/<id>` exige administrador ativo e o corpo
+`{"confirmacao":"EXCLUIR DEFINITIVAMENTE"}`. Não há tela de VTRs removidas,
+arquivamento lógico ou restauração.
+
+O servidor prepara a operação, remove fisicamente os arquivos pela **API do
+Supabase Storage** e só então exclui a VTR. As foreign keys
+`registros_vtr_viatura_id_fkey` e `fotos_registro_vtr_registro_id_fkey`, ambas
+`ON DELETE CASCADE`, removem histórico e metadados na mesma transação.
+A limpeza inclui os caminhos dos metadados e todos os objetos sob
+`fotos-vtr/<id-vtr>/`, inclusive uploads sem registro de foto. Caminhos
+inconsistentes com o ID da VTR abortam a operação, sem apagar fotos de outra VTR.
+Outros buckets e outras VTRs não são afetados.
+
+Banco e Storage não oferecem uma transação única. `exclusoes_vtr` guarda
+**somente uma operação técnica pendente e seus caminhos**, sem histórico
+arquivado nem possibilidade de restauração. Se houver falha, o servidor retorna
+erro explícito, conserva a operação para retomada e impede novos históricos,
+metadados de fotos ou alterações naquela VTR pelas tabelas `public`.
+Não há triggers ou alterações estruturais no schema gerenciado `storage`:
+`storage.objects` é consultada somente com SELECT; arquivos são gravados e
+removidos exclusivamente pela Storage API. Retirar a mesma VTR novamente retoma
+a limpeza. O cadastro pode permanecer visível até a conclusão, mas não pode
+receber novas gravações. O sucesso só é retornado após verificar que não há
+objetos restantes no Storage e excluir o cadastro e seus dependentes;
+a operação técnica também é apagada. Não exclua manualmente essa fila nem
+apague apenas linhas de `storage.objects`: isso não elimina arquivos físicos.
+
+Um upload de baixa/recebimento já em andamento pode terminar após o início
+da exclusão. O trigger em `public.fotos_registro_vtr` rejeita seu metadado
+(ou a VTR já não existe), acionando o rollback do fluxo. Esse rollback usa
+o cliente administrativo **somente no servidor**, remove pela Storage API todos
+os caminhos tentados por aquela requisição e depois apaga somente seu registro;
+não depende das permissões DELETE do usuário. Os caminhos são registrados antes
+do upload, incluindo o caso de resposta perdida após persistir o arquivo.
+Uma falha de cleanup é registrada e informada explicitamente: indisponibilidade
+da Storage API ou encerramento do processo impede garantir limpeza imediata,
+e exige retomada/suporte. Não há bloqueio de uploads diretos ao bucket por estes
+triggers; permissões de upload do Storage continuam sendo as já configuradas.
+
+A policy restritiva `viaturas_delete_somente_admin_ativo` continua negando
+DELETE direto a usuários comuns, inclusive para uma VTR sem históricos.
+Ela impediria o rollback de cadastro feito com a sessão desse usuário;
+por isso o rollback de cadastro também usa o cliente administrativo no servidor,
+limitado ao ID retornado pelo INSERT e aos arquivos/registro da própria requisição.
+Não existe endpoint que permita ao usuário escolher uma VTR para esse rollback.
+As permissões de cadastro normal não são ampliadas.
+
+#### Implantação e VTRs já arquivadas
+
+**Nenhuma migration ou limpeza remota é executada automaticamente.**
+Faça backup e programe uma janela de manutenção sem sessões/gravações em curso.
+As VTRs já arquivadas serão excluídas definitivamente, conforme a decisão
+administrativa, antes de remover seus campos de arquivamento:
+
+1. Aplicar somente
+   [`202610080002_vtr_permanent_deletion.sql`](supabase/migrations/202610080002_vtr_permanent_deletion.sql).
+   Ela confere as FKs e recusa dependências adicionais não revisadas; instala
+   a fila técnica, RPCs exclusivas de `service_role`, triggers somente nas tabelas
+   `public` contra gravações concorrentes e proteção contra DELETE que deixaria
+   fotos no Storage. Possui `BEGIN`/`COMMIT` e permite reaplicação, preservando
+   operações pendentes; a policy é recriada com `DROP POLICY IF EXISTS`.
+   Publicar também a correção de rollback junto da migration.
+2. Em ambiente administrativo confiável, com Node.js 22.18+ e a chave
+   `SUPABASE_SECRET_KEY` configurada em `.env.local`, consultar as VTRs legadas:
+
+   ```bash
+   node scripts/delete-legacy-vtrs.mjs
+   ```
+
+   Esse comando **apenas lista** as VTRs com `arquivada = true`.
+   Depois de revisar, confirmar explicitamente a limpeza:
+
+   ```bash
+   node scripts/delete-legacy-vtrs.mjs --confirmar-exclusao-definitiva
+   ```
+
+   Isso exclui somente essas VTRs, todos os seus registros e fotos, usando a
+   mesma rotina da API. Se falhar, pare a implantação, resolva o erro e execute
+   novamente: a limpeza pendente é retomada. VTRs não arquivadas são preservadas.
+   A chave administrativa nunca deve ir ao navegador.
+3. Aplicar
+   [`202610080003_remove_vtr_archive_columns.sql`](supabase/migrations/202610080003_remove_vtr_archive_columns.sql).
+   Ela **recusa execução** enquanto houver VTR arquivada ou exclusão pendente;
+   remove `viaturas.arquivada`, `arquivada_em`, `arquivada_por` e a FK dessa
+   última coluna, sem `CASCADE` em dependências desconhecidas.
+4. Publicar o novo código antes de reabrir o app. O código antigo depende dos
+   campos removidos; não mantenha instâncias antigas gravando durante a mudança.
+   Preservar e aplicar também a migration de perfis, se ainda estiver pendente.
+5. Validar com contas reais: usuário comum recebe 403 na exclusão; ADMIN
+   consegue excluir VTR ativa ou baixada; nenhuma linha/arquivo da VTR permanece
+   e outra VTR mantém cadastro, histórico, fotos e geração de PDF.
+
+Validação local sem acessar produção:
+
+```bash
+node --test tests/vtr-deletion.test.mjs tests/profiles-permissions.test.mjs
+npm run build
+npm run build:vinext
+node --test tests/registro-pdf-worker.test.mjs
+npx next typegen && npx tsc --noEmit
+```
 
 Please file feedback and issues over on the [Supabase GitHub org](https://github.com/supabase/supabase/issues/new/choose).
 

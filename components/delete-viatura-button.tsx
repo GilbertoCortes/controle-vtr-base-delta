@@ -4,7 +4,7 @@ import { Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-export function ArchiveViaturaButton({
+export function DeleteViaturaButton({
   isAdmin,
   viaturaId,
 }: {
@@ -18,19 +18,19 @@ export function ArchiveViaturaButton({
 
   if (!isAdmin) return null;
 
-  async function handleArchiveChange() {
+  async function handleDelete() {
     if (isSaving) return;
-    if (!window.confirm("Tem certeza que deseja remover esta VTR da Base Delta? O histórico será preservado.")) {
+    if (!window.confirm("Esta ação excluirá permanentemente esta VTR, todo o seu histórico e todas as fotos vinculadas. Esta ação não poderá ser desfeita.")) {
       return;
     }
 
     setError(null);
     setIsSaving(true);
     try {
-      const response = await fetch(`/api/viaturas/${viaturaId}/arquivamento`, {
-        method: "PATCH",
+      const response = await fetch(`/api/viaturas/${viaturaId}`, {
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ arquivada: true }),
+        body: JSON.stringify({ confirmacao: "EXCLUIR DEFINITIVAMENTE" }),
       });
       const result = (await response.json().catch(() => null)) as
         | {
@@ -53,7 +53,7 @@ export function ArchiveViaturaButton({
         return;
       }
 
-      setSuccess("VTR removida da Base Delta.");
+      setSuccess("VTR, histórico e fotos excluídos permanentemente.");
       window.setTimeout(() => {
         router.replace("/protected");
         router.refresh();
@@ -69,10 +69,10 @@ export function ArchiveViaturaButton({
     <div className="flex flex-col items-start gap-2">
       <button
         type="button"
-        onClick={handleArchiveChange}
+        onClick={handleDelete}
         aria-label="Remover da Base Delta"
         disabled={isSaving || Boolean(success)}
-        title="Remover da Base Delta"
+        title="Retirar VTR definitivamente"
         className="inline-flex size-12 items-center justify-center rounded-md border border-[#bd4c4b]/60 bg-[#301f22] p-0 text-[#f0aaa2] transition-colors hover:border-[#bd4c4b] hover:bg-[#bd4c4b] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#ef9691] disabled:cursor-wait disabled:opacity-60"
       >
         {isSaving ? "…" : <Trash2 aria-hidden="true" className="size-5" />}

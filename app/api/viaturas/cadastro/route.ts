@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
 import { normalizePlate } from "@/lib/plate";
+import { rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
 
 type TipoViatura = "Viatura" | "Motocicleta";
 const photoBucket = "fotos-vtr";
@@ -249,43 +250,7 @@ export async function POST(request: Request) {
 
   const createdViaturaId = createdViatura.id;
   let registroId: string | number | null = null;
-  const uploadedPaths: string[] = [];
-  const fotoIds: (string | number)[] = [];
-
-  async function rollback() {
-    let rollbackFailed = false;
-    try {
-      if (fotoIds.length) {
-        const { error } = await supabase.from("fotos_registro_vtr").delete().in("id", fotoIds);
-        if (error) rollbackFailed = true;
-      }
-    } catch {
-      rollbackFailed = true;
-    }
-    try {
-      if (uploadedPaths.length) {
-        const { error } = await supabase.storage.from(photoBucket).remove(uploadedPaths);
-        if (error) rollbackFailed = true;
-      }
-    } catch {
-      rollbackFailed = true;
-    }
-    try {
-      if (registroId !== null) {
-        const { error } = await supabase.from("registros_vtr").delete().eq("id", registroId);
-        if (error) rollbackFailed = true;
-      }
-    } catch {
-      rollbackFailed = true;
-    }
-    try {
-      const { error } = await supabase.from("viaturas").delete().eq("id", createdViaturaId);
-      if (error) rollbackFailed = true;
-    } catch {
-      rollbackFailed = true;
-    }
-    return !rollbackFailed;
-  }
+  const attemptedPaths: string[] = [];
 
   try {
     const { data: registro, error: registroError } = await supabase
@@ -307,22 +272,23 @@ export async function POST(request: Request) {
 
     for (const photo of photos) {
       const path = `${createdViatura.id}/${registroId}/${randomUUID()}.${photo.extension}`;
+      attemptedPaths.push(path);
       const { error: uploadError } = await supabase.storage
         .from(photoBucket)
         .upload(path, photo.bytes, { contentType: photo.contentType, upsert: false });
       if (uploadError) throw uploadError;
-      uploadedPaths.push(path);
 
-      const { data: foto, error: fotoError } = await supabase
+      const { error: fotoError } = await supabase
         .from("fotos_registro_vtr")
         .insert({ registro_id: registroId, caminho_storage: path })
         .select("id")
         .single();
       if (fotoError) throw fotoError;
-      fotoIds.push(foto.id);
     }
   } catch (error) {
-    const rollbackSucceeded = await rollback();
+    const rollbackSucceeded = await rollbackVtrOperation({
+      viaturaId: createdViaturaId, registroId, attemptedPaths, deleteCreatedViatura: true,
+    });
     console.error("Falha ao persistir check-in inicial da VTR", { error, rollbackSucceeded });
     return NextResponse.json(
       {

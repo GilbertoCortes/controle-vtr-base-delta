@@ -13,13 +13,12 @@ type Viatura = {
 };
 
 async function ProtectedContent() {
-  const { supabase, user, isAdmin } = await getAdminSession();
+  const { supabase, user } = await getAdminSession();
   if (!user) redirect("/auth/login");
 
   const { data, error } = await supabase
     .from("viaturas")
     .select("id, placa, tipo, situacao")
-    .eq("arquivada", false)
     .order("placa");
   const viaturas = (data ?? []) as Viatura[];
 
@@ -92,16 +91,6 @@ async function ProtectedContent() {
           + INSERIR VTR
         </Link>
       </div>
-      {isAdmin && (
-        <div className="flex justify-center">
-          <Link
-            href="/protected/removidas"
-            className="inline-flex min-h-12 items-center justify-center rounded-md border border-[#40514c] px-5 text-sm font-semibold text-[#e0e8e3] transition-colors hover:bg-white/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d5b45b]"
-          >
-            VTRs REMOVIDAS
-          </Link>
-        </div>
-      )}
     </section>
   );
 }
