@@ -138,6 +138,27 @@ leitura do próprio perfil deve funcionar e `PATCH /rest/v1/profiles?id=eq.<id>`
 deve falhar com permissão negada. Com administrador ativo, valide edição,
 criação e ativação/desativação pelas APIs administrativas do app.
 
+### Prefetch dos detalhes de VTR no Cloudflare
+
+Os cartões da lista principal usam `prefetch={false}` somente nos links
+`/protected/viaturas/<id>`. Isso evita requisições RSC antecipadas desses
+destinos por viewport/hover no App Router, sem mudar o destino ou a navegação
+por clique. Os demais links mantêm o comportamento anterior.
+
+A página individual continua carregando histórico e metadados de fotos em lote,
+mas solicita uma signed URL por foto. Desabilitar o prefetch evita antecipar esse
+trabalho para várias VTRs ao abrir a lista; não muda consultas, autenticação,
+PDF ou banco. Essa medida reduz trabalho antecipado, mas não comprova por si só
+a causa de um Error 1102: após publicar, comparar o `wrangler tail` ao abrir a
+lista sem clicar e ao abrir uma VTR, além das métricas de CPU/memória do Worker.
+
+Validação local:
+
+```bash
+node --test tests/vtr-links-prefetch.test.mjs
+npm run build:vinext
+```
+
 ### PDF no Cloudflare/Vinext
 
 O PDFKit resolve o perfil de cores interno com `new URL(..., import.meta.url)`.

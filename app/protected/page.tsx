@@ -57,6 +57,7 @@ async function ProtectedContent() {
               >
                 <Link
                   href={`/protected/viaturas/${viatura.id}`}
+                  prefetch={false}
                   aria-label={`Abrir VTR ${formatPlate(viatura.placa)}`}
                   className="flex min-h-16 min-w-0 flex-1 items-center rounded-md border border-[#40514c] bg-[#111919] px-4 text-[19px] font-bold tracking-[0.08em] text-[#f3f4ef] transition-colors hover:border-[#d5b45b] hover:bg-[#202b28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d5b45b]"
                 >
