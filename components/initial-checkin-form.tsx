@@ -256,10 +256,8 @@ export function InitialCheckinForm() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!viatura || isSubmitting || completed) return;
-    if (!persistCheckin(answers, observacoes, photos)) {
-      setSubmitError("Não foi possível preservar os dados neste navegador. Libere espaço e tente novamente.");
-      return;
-    }
+    // O envio usa os dados em memória mesmo quando o armazenamento está cheio.
+    persistCheckin(answers, observacoes, photos);
 
     setIsSubmitting(true);
     setCompleted(false);
@@ -308,7 +306,7 @@ export function InitialCheckinForm() {
       }, 900);
     } catch {
       setSubmitError(
-        "Não foi possível conectar ao sistema. Seus dados continuam preservados; tente novamente.",
+        "Não foi possível conectar ao sistema. Mantenha esta página aberta e tente novamente.",
       );
     } finally {
       setIsSubmitting(false);
@@ -540,7 +538,7 @@ export function InitialCheckinForm() {
 
       {storageError && (
         <p role="alert" className="text-sm text-[#f0aaa2]">
-          Não foi possível preservar todos os dados temporários neste navegador.
+          O rascunho não foi salvo neste navegador. Você pode enviar o formulário, mas mantenha esta página aberta até concluir para não perder os dados e as fotos.
         </p>
       )}
       {submitError && (

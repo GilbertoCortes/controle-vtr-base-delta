@@ -274,10 +274,8 @@ export function RecebimentoOficinaForm({
       setSaveError("Descreva os reparos realizados.");
       return;
     }
-    if (!persist({ cpfDigits })) {
-      setSaveError("Não foi possível preservar o rascunho neste navegador.");
-      return;
-    }
+    // O envio usa os dados em memória mesmo quando o armazenamento está cheio.
+    persist({ cpfDigits });
 
     setSubmitting(true);
     setSaveError(null);
@@ -309,7 +307,7 @@ export function RecebimentoOficinaForm({
         router.refresh();
       }, 900);
     } catch {
-      setSaveError("Não foi possível conectar ao sistema. Seus dados continuam preservados.");
+      setSaveError("Não foi possível conectar ao sistema. Mantenha esta página aberta e tente novamente.");
     } finally {
       setSubmitting(false);
     }
@@ -472,7 +470,7 @@ export function RecebimentoOficinaForm({
         )}
       </section>
 
-      {storageError && <p role="alert" className="text-sm text-[#f0aaa2]">Não foi possível preservar o rascunho neste navegador.</p>}
+      {storageError && <p role="alert" className="text-sm text-[#f0aaa2]">O rascunho não foi salvo neste navegador. Você pode enviar o formulário, mas mantenha esta página aberta até concluir para não perder os dados e as fotos.</p>}
       {saveError && <p role="alert" className="whitespace-pre-wrap rounded-md border border-[#bd4c4b]/35 bg-[#bd4c4b]/10 p-4 text-sm text-[#f0aaa2]">{saveError}</p>}
       {completed && <p role="status" className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">VTR recebida da oficina com sucesso.</p>}
 
