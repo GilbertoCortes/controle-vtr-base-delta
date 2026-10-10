@@ -44,7 +44,7 @@ async function ProtectedContent() {
           Nenhuma VTR cadastrada.
         </p>
       ) : (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
           {viaturas.map((viatura) => {
             const situacao = viatura.situacao.trim().toUpperCase();
             const isActive = situacao === "ATIVA";
@@ -53,13 +53,13 @@ async function ProtectedContent() {
             return (
               <li
                 key={viatura.id}
-                className="flex items-center gap-3 rounded-lg border border-white/10 bg-[#192222] p-3"
+                className="flex items-center gap-2 rounded-lg border border-white/10 bg-[#192222] p-3 md:gap-3"
               >
                 <Link
                   href={`/protected/viaturas/${viatura.id}`}
                   prefetch={false}
                   aria-label={`Abrir VTR ${formatPlate(viatura.placa)}`}
-                  className="flex min-h-16 min-w-0 flex-1 items-center rounded-md border border-[#40514c] bg-[#111919] px-4 text-[19px] font-bold tracking-[0.08em] text-[#f3f4ef] transition-colors hover:border-[#d5b45b] hover:bg-[#202b28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d5b45b]"
+                  className="flex min-h-16 min-w-0 flex-1 items-center rounded-md border border-[#40514c] bg-[#111919] px-2 text-[19px] font-bold tracking-[0.08em] text-[#f3f4ef] transition-colors hover:border-[#d5b45b] hover:bg-[#202b28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d5b45b] md:px-4"
                 >
                   <Image
                     src={isMoto ? "/moto.png" : "/carro.png"}
@@ -69,10 +69,10 @@ async function ProtectedContent() {
                     className="size-9 shrink-0 object-contain"
                     aria-hidden="true"
                   />
-                  <span className="pl-4">{formatPlate(viatura.placa)}</span>
+                  <span className="shrink-0 whitespace-nowrap pl-2 md:pl-4">{formatPlate(viatura.placa)}</span>
                 </Link>
                 <span
-                  className={`w-[84px] shrink-0 text-center text-sm font-bold ${
+                  className={`w-16 shrink-0 text-center text-sm font-bold md:w-[84px] ${
                     isActive ? "text-emerald-400" : "text-red-400"
                   }`}
                 >
