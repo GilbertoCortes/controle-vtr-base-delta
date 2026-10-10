@@ -39,3 +39,8 @@ export function maskPlate(value: string): string {
 export function isValidPlate(value: string): boolean {
   return PLATE_PATTERN.test(normalizePlate(value));
 }
+
+// Cadastro: nao remove caracteres invalidos antes de validar.
+export function isStrictMercosulPlate(value: string): boolean {
+  return PLATE_PATTERN.test(value.toUpperCase());
+}

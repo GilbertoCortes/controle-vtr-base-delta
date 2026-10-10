@@ -44,6 +44,30 @@ let mf;
 let photoCount = 0;
 let downloads = [];
 let generateRegistroPdf;
+let receiveFinalReport;
+let finalReportMode = false;
+let photoFailure = false;
+let adminActive = true;
+let writes = [];
+const finalChecklist = {
+  km_atual: 1000, pintura: "Boa", lataria: "Boa", combustivel: "Cheio",
+  oleo_motor: "Bom", liquido_arrefecimento: "Bom",
+  seta_dianteira_direita: "OK", seta_dianteira_esquerda: "OK", seta_traseira_direita: "OK", seta_traseira_esquerda: "OK",
+  luz_freio: "OK", luz_alerta: "OK", farol_alto: "OK", farol_baixo: "OK", buzina: "OK",
+  pneu_dianteiro_esquerdo: "OK", pneu_dianteiro_direito: "OK", pneu_traseiro_esquerdo: "OK", pneu_traseiro_direito: "OK",
+  strobo: "OK", sirene: "OK", giroflex: "OK", retrovisor_direito: "Possui", retrovisor_esquerdo: "Possui",
+  estepe: "Possui", triangulo: "Possui", chave_roda: "Possui",
+};
+const lifeEvents = ["checkin_inicial", "baixa", "recebimento", "vistoria_final"].map((tipo_registro, index) => ({
+  ...registro, id: `evento-${index}`, tipo_registro, usuario_id: user.id,
+  criado_em: `2026-10-0${index + 1}T12:00:00Z`, checklist: finalChecklist,
+}));
+const categories = ["frente", "lateral_direita", "lateral_esquerda", "traseira", "painel", "equipamentos"];
+const lifePhotos = lifeEvents.flatMap((event, index) => (
+  index === 0 || index === 3 ? [...categories, "avarias", "avarias"] : ["avarias"]
+).map((categoria, n) => ({
+  registro_id: event.id, caminho_storage: `vtr/${event.id}/${n}.png`, descricao: null, categoria,
+})));
 
 before(async () => {
   const source = readFileSync("lib/registro-pdf.ts", "utf8").replace(
@@ -57,6 +81,10 @@ before(async () => {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
   });
   ({ generateRegistroPdf } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`));
+  const downloadModule = ts.transpileModule(readFileSync("lib/final-report-download.ts", "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  });
+  ({ receiveFinalReport } = await import(`data:text/javascript;base64,${Buffer.from(downloadModule.outputText).toString("base64")}`));
 
   const paths = readdirSync(root, { recursive: true }).filter((path) => path.endsWith(".js"));
   const modules = ["index.js", ...paths.filter((path) => path !== "index.js")].map((path) => ({
@@ -72,6 +100,7 @@ before(async () => {
     bindings: {
       NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "fixture",
+      SUPABASE_SECRET_KEY: "fixture",
     },
     kvNamespaces: ["VINEXT_KV_CACHE"],
     images: { binding: "IMAGES" },
@@ -79,6 +108,27 @@ before(async () => {
     outboundService: async (request) => {
       const url = new URL(request.url);
       assert.equal(url.origin, new URL(supabaseUrl).origin);
+      if (finalReportMode) {
+        const counted = (rows) => Response.json(rows, { headers: { "Content-Range": `0-${Math.max(0, rows.length - 1)}/${rows.length}` } });
+        if (request.method !== "GET") writes.push({ method: request.method, path: url.pathname });
+        switch (url.pathname) {
+          case "/auth/v1/user": return Response.json(user);
+          case "/rest/v1/profiles": return url.searchParams.get("select")?.includes("nome_completo")
+            ? counted([{ id: user.id, nome_completo: "ADMIN Fixture", rg_id: "123", base: "Delta", ala: "Alfa" }])
+            : Response.json({ perfil: "administrador", ativo: adminActive });
+          case "/rest/v1/retiradas_vtr": return Response.json(request.method === "PATCH"
+            ? { viatura_id: "vtr" } : { registro_id: lifeEvents.at(-1).id, fase: "selada" });
+          case "/rest/v1/rpc/selar_vistoria_final": return new Response(null, { status: 204 });
+          case "/rest/v1/viaturas": return Response.json(viatura);
+          case "/rest/v1/registros_vtr": return counted(lifeEvents);
+          case "/rest/v1/fotos_registro_vtr": return counted(lifePhotos);
+          default:
+            assert.match(url.pathname, /^\/storage\/v1\/object\/fotos-vtr\/vtr\/evento-\d\/\d+\.png$/);
+            downloads.push(url.href);
+            if (photoFailure) return Response.json({ message: "Foto indisponível" }, { status: 404 });
+            return new Response(image, { headers: { "Content-Type": "image/png" } });
+        }
+      }
       assert.equal(request.method, "GET");
       switch (url.pathname) {
         case "/auth/v1/user": return Response.json(user);
@@ -147,4 +197,48 @@ for (const count of [0, 1, 3]) {
 test("PDF continua exigindo sessao autenticada", async () => {
   const response = await mf.dispatchFetch("https://worker.test/api/viaturas/vtr/registros/registro/pdf");
   assert.equal(response.status, 401);
+});
+
+for (const [device, agent] of Object.entries({
+  ...agents,
+  android: "Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36",
+})) {
+  test(`PDF completo: quatro eventos e 18 fotos no workerd, ${device}, sem excluir`, async () => {
+    finalReportMode = true; photoFailure = false; adminActive = true; downloads = []; writes = [];
+    const response = await mf.dispatchFetch("https://worker.test/api/viaturas/vtr/relatorio-final", {
+      headers: { cookie, "user-agent": agent },
+    });
+    assert.equal(response.status, 200, response.status !== 200 ? await response.text() : "");
+    const received = await receiveFinalReport(response);
+    const bytes = Buffer.from(await received.blob.arrayBuffer());
+    assert.equal(response.headers.get("content-type"), "application/pdf");
+    assert.equal(Number(response.headers.get("x-relatorio-bytes")), bytes.length);
+    assert.equal(bytes.subarray(0, 5).toString(), "%PDF-");
+    assert.match(bytes.toString("latin1"), /%%EOF\s*$/);
+    assert.match(response.headers.get("x-relatorio-recibo"), /^[a-f0-9]{64}$/);
+    assert.match(response.headers.get("x-relatorio-sha256"), /^[a-f0-9]{64}$/);
+    assert.match(response.headers.get("content-disposition"), /HISTORICO_COMPLETO_ABC1D23\.pdf/);
+    assert.equal(downloads.length, lifePhotos.length);
+    assert.ok((bytes.toString("latin1").match(/\/Type \/Page\b/g) ?? []).length >= 23);
+    assert.deepEqual(writes, [
+      { method: "POST", path: "/rest/v1/rpc/selar_vistoria_final" },
+      { method: "PATCH", path: "/rest/v1/retiradas_vtr" },
+    ]);
+  });
+}
+
+test("PDF completo no Worker: foto indisponível não emite recibo nem chama exclusão", async () => {
+  finalReportMode = true; photoFailure = true; downloads = []; writes = [];
+  const response = await mf.dispatchFetch("https://worker.test/api/viaturas/vtr/relatorio-final", { headers: { cookie } });
+  assert.equal(response.status, 500);
+  assert.equal(response.headers.get("x-relatorio-recibo"), null);
+  assert.equal((await response.json()).message, "Não foi possível gerar o relatório final. A VTR não foi excluída.");
+  assert.deepEqual(writes, [{ method: "POST", path: "/rest/v1/rpc/selar_vistoria_final" }]);
+});
+
+test("PDF completo no Worker exige ADMIN ativo", async () => {
+  finalReportMode = true; adminActive = false; writes = [];
+  const response = await mf.dispatchFetch("https://worker.test/api/viaturas/vtr/relatorio-final", { headers: { cookie } });
+  assert.equal(response.status, 403);
+  assert.equal(writes.length, 0);
 });

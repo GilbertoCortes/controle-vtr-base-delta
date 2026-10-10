@@ -8,12 +8,11 @@ import {
   viaturaDraftScope,
 } from "@/lib/vtr-draft";
 import { getDraftUserId, loadDraft, saveDraft } from "@/lib/draft-storage";
-import { formatPlate, isValidPlate, maskPlate, normalizePlate } from "@/lib/plate";
+import { isStrictMercosulPlate } from "@/lib/plate";
 
 export function NewViaturaForm() {
   const router = useRouter();
   const [placa, setPlaca] = useState(""); // forma canonica, sem hifen
-  const [placaDisplay, setPlacaDisplay] = useState(""); // forma visual, com hifen
   const [plateTouched, setPlateTouched] = useState(false);
   const [tipo, setTipo] = useState<VtrType>("Viatura");
   const [storageError, setStorageError] = useState(false);
@@ -27,9 +26,8 @@ export function NewViaturaForm() {
       const draft = loadDraft<Partial<ViaturaDraft>>(uid, viaturaDraftScope);
       if (!draft) return;
       if (typeof draft.placa === "string") {
-        const canon = normalizePlate(draft.placa);
+        const canon = draft.placa.toUpperCase();
         setPlaca(canon);
-        setPlacaDisplay(formatPlate(canon));
       }
       if (draft.tipo === "Viatura" || draft.tipo === "Motocicleta") {
         setTipo(draft.tipo);
@@ -49,7 +47,7 @@ export function NewViaturaForm() {
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!isValidPlate(placa)) {
+    if (!isStrictMercosulPlate(placa)) {
       setPlateTouched(true);
       return;
     }
@@ -78,23 +76,20 @@ export function NewViaturaForm() {
           inputMode="text"
           autoCapitalize="characters"
           autoComplete="off"
-          maxLength={8}
-          value={placaDisplay}
+          value={placa}
           onChange={(event) => {
-            const display = maskPlate(event.target.value);
-            const canon = normalizePlate(event.target.value);
-            setPlacaDisplay(display);
+            const canon = event.target.value.toUpperCase();
             setPlaca(canon);
             persistDraft({ placa: canon, tipo });
           }}
           onBlur={() => setPlateTouched(true)}
-          aria-invalid={plateTouched && !isValidPlate(placa)}
+          aria-invalid={plateTouched && !isStrictMercosulPlate(placa)}
           aria-describedby="placa-error"
           className="h-12 w-full rounded-md border border-[#40514c] bg-[#111919] px-3.5 text-base uppercase text-[#f3f4ef] placeholder:normal-case placeholder:text-[#71817b] outline-none transition-colors focus:border-[#d5b45b] focus:ring-2 focus:ring-[#d5b45b]/20 sm:text-sm"
         />
-        {plateTouched && !isValidPlate(placa) && (
+        {plateTouched && !isStrictMercosulPlate(placa) && (
           <p id="placa-error" role="alert" className="text-sm text-[#f0aaa2]">
-            Digite uma placa válida no formato ABC-1D23.
+            Placa inválida. Use o formato KKK5K55.
           </p>
         )}
       </div>
@@ -136,7 +131,7 @@ export function NewViaturaForm() {
 
       <button
         type="submit"
-        disabled={!isValidPlate(placa)}
+        disabled={!isStrictMercosulPlate(placa)}
         className="min-h-14 w-full rounded-md bg-[#d5b45b] px-5 text-sm font-bold text-[#17201e] transition-colors hover:bg-[#e2c675] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e2c675] focus-visible:ring-offset-2 focus-visible:ring-offset-[#192222] disabled:cursor-not-allowed disabled:opacity-50"
       >
         AVANÇAR PARA CHECK-IN/ENTRADA DE VTR

@@ -15,6 +15,7 @@ const migration = readFileSync("supabase/migrations/202610080002_vtr_permanent_d
 const cleanup = readFileSync("supabase/migrations/202610080003_remove_vtr_archive_columns.sql", "utf8");
 const answers = {
   km_atual: 100, combustivel: "Cheio", oleo_motor: "Bom", liquido_arrefecimento: "Bom",
+  pintura: "Boa", lataria: "Boa",
   seta_dianteira_direita: "OK", seta_dianteira_esquerda: "OK",
   seta_traseira_direita: "OK", seta_traseira_esquerda: "OK",
   luz_freio: "OK", luz_alerta: "OK", farol_alto: "OK", farol_baixo: "OK", buzina: "OK",
@@ -25,6 +26,9 @@ const answers = {
   estepe: "Possui", triangulo: "Possui", chave_roda: "Possui",
 };
 const photos = [{ dataUrl: "data:image/jpeg;base64,/9j/2Q==" }];
+const inspection = loadModule("lib/vtr-inspection.ts");
+const initialPhotos = inspection.inspectionCategories.filter((category) => category.value !== "avarias")
+  .map((category) => ({ ...photos[0], categoria: category.value }));
 const postRequest = (body) => new Request("https://app.example.test/api/viaturas", {
   method: "POST", body: JSON.stringify(body),
 });
@@ -124,11 +128,16 @@ function routeFixture({ signedIn = true, active = true, admin = true } = {}, cli
       }),
     },
   });
+  const authorizedClient = {
+    ...client,
+    rpc: async (name, params) => name === "autorizar_exclusao_relatorio"
+      ? { error: null } : client.rpc(name, params),
+  };
   const route = loadModule("app/api/viaturas/[id]/route.ts", {
     "@/lib/supabase/admin": sessions,
     "@/lib/supabase/admin-server": { createSupabaseAdminClient: () => {
       assert.ok(admin && active && signedIn);
-      return client;
+      return authorizedClient;
     } },
     "@/lib/delete-viatura": deletion,
     "next/cache": { revalidatePath: (path) => revalidated.push(path) },
@@ -136,7 +145,7 @@ function routeFixture({ signedIn = true, active = true, admin = true } = {}, cli
   return { route, revalidated, client };
 }
 
-function request(body = { confirmacao: "EXCLUIR DEFINITIVAMENTE" }) {
+function request(body = { confirmacao: "EXCLUIR DEFINITIVAMENTE", recibo: "a".repeat(64), pdfSalvo: true }) {
   return new Request("https://app.example.test/api/viaturas", { method: "DELETE", body: JSON.stringify(body) });
 }
 
@@ -152,7 +161,7 @@ for (const [options, expected] of [
 }
 
 test("API exige confirmação explícita e UUID válido", async () => {
-  for (const [body, id] of [[{}, vtrId], [{ confirmacao: false }, vtrId], [null, vtrId], [{ confirmacao: "EXCLUIR DEFINITIVAMENTE" }, "inválido"]]) {
+  for (const [body, id] of [[{}, vtrId], [{ confirmacao: false }, vtrId], [null, vtrId], [{ confirmacao: "EXCLUIR DEFINITIVAMENTE", recibo: "a".repeat(64), pdfSalvo: true }, "inválido"]]) {
     const { route, client } = routeFixture();
     assert.equal((await route.DELETE(request(body), { params: Promise.resolve({ id }) })).status, 400);
     assert.equal(client.calls.length, 0);
@@ -171,29 +180,20 @@ test("API ADMIN só retorna sucesso e invalida listas após finalizar banco e St
   assert.deepEqual(failed.revalidated, []);
 });
 
-test("Botão exige confirmação literal; cancelar não envia requisição; comum não vê botão", async () => {
-  let admin = true;
-  let confirmed = false;
-  const messages = [];
+test("Botão abre vistoria final sem excluir; comum não vê botão", async () => {
+  const destinations = [];
   const fetches = [];
   const { DeleteViaturaButton } = loadModule("components/delete-viatura-button.tsx", {
     react: { useState: (value) => [value, () => {}] },
-    "next/navigation": { useRouter: () => ({ replace: () => {}, refresh: () => {} }) },
+    "next/navigation": { useRouter: () => ({ push: (path) => destinations.push(path) }) },
   }, {
-    window: { confirm: (message) => { messages.push(message); return confirmed; }, setTimeout: (callback) => callback() },
     fetch: async (...args) => { fetches.push(args); return Response.json({ message: "OK" }); },
   });
-  const tree = DeleteViaturaButton({ isAdmin: admin, viaturaId: vtrId });
-  const button = tree.props.children[0];
-  await button.props.onClick();
+  const tree = DeleteViaturaButton({ isAdmin: true, viaturaId: vtrId });
+  await tree.props.onClick();
   assert.equal(fetches.length, 0);
-  assert.equal(messages[0], "Esta ação excluirá permanentemente esta VTR, todo o seu histórico e todas as fotos vinculadas. Esta ação não poderá ser desfeita.");
-  confirmed = true;
-  await button.props.onClick();
-  assert.equal(fetches[0][0], `/api/viaturas/${vtrId}`);
-  assert.equal(fetches[0][1].method, "DELETE");
-  admin = false;
-  assert.equal(DeleteViaturaButton({ isAdmin: admin, viaturaId: vtrId }), null);
+  assert.deepEqual(destinations, [`/protected/viaturas/${vtrId}/retirada`]);
+  assert.equal(DeleteViaturaButton({ isAdmin: false, viaturaId: vtrId }), null);
 });
 
 test("Área de removidas e API de restauração não existem", () => {
@@ -649,6 +649,7 @@ async function handlerSchema(db) {
       ADD COLUMN checklist jsonb, ADD COLUMN usuario_id uuid, ADD COLUMN reparos_realizados boolean,
       ADD COLUMN descricao_reparos text, ADD COLUMN empresa text, ADD COLUMN responsavel_entrega text,
       ADD COLUMN cpf_responsavel_entrega text;
+    ALTER TABLE public.fotos_registro_vtr ADD COLUMN categoria text;
   `);
 }
 
@@ -663,6 +664,8 @@ function handlerDependencies(client, adminClient, userId = otherId) {
       "@/lib/supabase/admin-server": { createSupabaseAdminClient: () => adminClient },
     }),
     "@/lib/plate": loadModule("lib/plate.ts"),
+    "@/lib/vtr-inspection": inspection,
+    "@/lib/inspection-photos-server": loadModule("lib/inspection-photos-server.ts", { "@/lib/vtr-inspection": inspection }),
     "@/lib/vtr-km": loadModule("lib/vtr-km.ts"),
     "next/cache": { revalidatePath: () => {} },
   };
@@ -682,8 +685,8 @@ test("Handlers reais: cadastrar, baixar, receber e excluir VTR com fotos após r
     const dependencies = handlerDependencies(client, apiDatabaseClient(db, files, { privileged: true }));
     const cadastro = loadModule("app/api/viaturas/cadastro/route.ts", dependencies);
     const created = await cadastro.POST(postRequest({
-      viatura: { placa: "ABC-1D23", tipo: "Viatura" },
-      checkin: { answers, observacoes: "Entrada de teste", photos },
+      viatura: { placa: "abc1d23", tipo: "Viatura" },
+      checkin: { answers, observacoes: "Entrada de teste", photos: initialPhotos },
     }));
     assert.equal(created.status, 201, JSON.stringify(await created.json()));
     const id = (await db.query("SELECT id FROM public.viaturas")).rows[0].id;
@@ -701,8 +704,9 @@ test("Handlers reais: cadastrar, baixar, receber e excluir VTR com fotos após r
     assert.deepEqual((await db.query("SELECT situacao, quilometragem FROM public.viaturas")).rows,
       [{ situacao: "ativa", quilometragem: 120 }]);
     assert.equal((await db.query("SELECT * FROM public.registros_vtr")).rows.length, 3);
-    assert.equal((await db.query("SELECT * FROM public.fotos_registro_vtr")).rows.length, 3);
-    assert.equal(files.size, 3);
+    assert.equal((await db.query("SELECT * FROM public.fotos_registro_vtr")).rows.length, 8);
+    assert.equal(files.size, 8);
+    assert.equal((await db.query("SELECT placa FROM public.viaturas")).rows[0].placa, "ABC1D23");
     await db.exec("RESET ROLE; SELECT set_config('request.jwt.claim.role', 'service_role', false); SET ROLE service_role;");
     const { route } = routeFixture({}, client);
     const removed = await route.DELETE(request(), { params: Promise.resolve({ id }) });
@@ -797,7 +801,7 @@ for (const failure of ["registro", "upload-com-resposta-perdida"]) {
       });
       const route = loadModule("app/api/viaturas/cadastro/route.ts", handlerDependencies(client, adminClient, vtrId));
       const response = await route.POST(postRequest({
-        viatura: { placa: "GHI-7J89", tipo: "Viatura" }, checkin: { answers, photos },
+        viatura: { placa: "GHI7J89", tipo: "Viatura" }, checkin: { answers, photos: initialPhotos },
       }));
       assert.equal(response.status, 500);
       assert.match((await response.json()).message, /VTR recém-criada foi removida/);

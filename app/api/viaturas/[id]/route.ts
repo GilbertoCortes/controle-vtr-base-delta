@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin-server";
 import { deleteViatura, ViaturaDeletionError } from "@/lib/delete-viatura";
+import { createHash } from "node:crypto";
 
 export async function DELETE(
   request: Request,
@@ -23,6 +24,10 @@ export async function DELETE(
   if (!body || typeof body !== "object" || !("confirmacao" in body) || body.confirmacao !== "EXCLUIR DEFINITIVAMENTE") {
     return NextResponse.json({ message: "Confirme a exclusão definitiva da VTR." }, { status: 400 });
   }
+  if (!("recibo" in body) || typeof body.recibo !== "string" || !/^[0-9a-f]{64}$/.test(body.recibo) ||
+      !("pdfSalvo" in body) || body.pdfSalvo !== true) {
+    return NextResponse.json({ message: "Gere, baixe e confirme o PDF completo antes de excluir a VTR." }, { status: 403 });
+  }
 
   const { id } = await params;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
@@ -30,7 +35,16 @@ export async function DELETE(
   }
 
   try {
-    await deleteViatura(createSupabaseAdminClient(), id);
+    const client = createSupabaseAdminClient();
+    const { error: receiptError } = await client.rpc("autorizar_exclusao_relatorio", {
+      target_id: id, actor_id: session.user.id,
+      receipt_hash: createHash("sha256").update(body.recibo).digest("hex"),
+    });
+    if (receiptError) {
+      console.error("Exclusão sem relatório autorizado rejeitada", { id, receiptError });
+      return NextResponse.json({ message: "Gere, baixe e confirme o PDF completo antes de excluir a VTR." }, { status: 403 });
+    }
+    await deleteViatura(client, id);
   } catch (error) {
     if (error instanceof ViaturaDeletionError) {
       return NextResponse.json({ message: error.message }, { status: error.status });

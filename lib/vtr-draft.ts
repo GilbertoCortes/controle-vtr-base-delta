@@ -10,6 +10,7 @@ export type CheckinPhoto = {
   id: string;
   name: string;
   dataUrl: string;
+  categoria?: import("@/lib/vtr-inspection").InspectionCategory;
 };
 
 export type CheckinDraft = {

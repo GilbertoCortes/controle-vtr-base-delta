@@ -1,12 +1,12 @@
-import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
-import { normalizePlate } from "@/lib/plate";
+import { isStrictMercosulPlate } from "@/lib/plate";
 import { rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
+import { inspectionFields, validateInspectionAnswers } from "@/lib/vtr-inspection";
+import { prepareInspectionPhotos, type PreparedInspectionPhoto } from "@/lib/inspection-photos-server";
 
-type TipoViatura = "Viatura" | "Motocicleta";
 const photoBucket = "fotos-vtr";
 
 type SavePayload = {
@@ -21,39 +21,6 @@ type SavePayload = {
   };
 };
 
-type PreparedPhoto = {
-  contentType: string;
-  extension: string;
-  bytes: Buffer;
-};
-
-const conditionOptions = ["OK", "Ruim"];
-const possessionOptions = ["Possui", "Não possui"];
-const optionalConditionOptions = ["OK", "Ruim", "Não possui"];
-const fuelOptions = ["Vazio", "1/4", "1/2", "3/4", "Cheio"];
-
-function preparePhotos(value: unknown): PreparedPhoto[] | null {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) return null;
-
-  const photos: PreparedPhoto[] = [];
-  for (const item of value) {
-    if (!item || typeof item.dataUrl !== "string") return null;
-    const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(
-      item.dataUrl,
-    );
-    if (!match) return null;
-    const bytes = Buffer.from(match[2], "base64");
-    if (!bytes.length || bytes.length > 5 * 1024 * 1024) return null;
-    photos.push({
-      contentType: match[1],
-      extension: match[1] === "image/png" ? "png" : match[1] === "image/webp" ? "webp" : "jpg",
-      bytes,
-    });
-  }
-  return photos;
-}
-
 function errorFields(error: unknown) {
   const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
   return {
@@ -63,47 +30,6 @@ function errorFields(error: unknown) {
   };
 }
 
-function allowedChecklistFields(tipo: TipoViatura) {
-  const fields: Record<string, readonly string[]> = {
-    oleo_motor: ["Bom", "Inapropriado"],
-    liquido_arrefecimento: ["Bom", "Inapropriado"],
-    combustivel: fuelOptions,
-    seta_dianteira_direita: conditionOptions,
-    seta_dianteira_esquerda: conditionOptions,
-    seta_traseira_direita: conditionOptions,
-    seta_traseira_esquerda: conditionOptions,
-    luz_freio: conditionOptions,
-    luz_alerta: conditionOptions,
-    farol_alto: conditionOptions,
-    farol_baixo: conditionOptions,
-    buzina: conditionOptions,
-    strobo: optionalConditionOptions,
-    sirene: optionalConditionOptions,
-    giroflex: optionalConditionOptions,
-    retrovisor_direito: possessionOptions,
-    retrovisor_esquerdo: possessionOptions,
-  };
-
-  if (tipo === "Viatura") {
-    Object.assign(fields, {
-      pneu_dianteiro_esquerdo: conditionOptions,
-      pneu_dianteiro_direito: conditionOptions,
-      pneu_traseiro_esquerdo: conditionOptions,
-      pneu_traseiro_direito: conditionOptions,
-      estepe: possessionOptions,
-      triangulo: possessionOptions,
-      chave_roda: possessionOptions,
-    });
-  } else {
-    Object.assign(fields, {
-      pneu_dianteiro: conditionOptions,
-      pneu_traseiro: conditionOptions,
-    });
-  }
-
-  return fields;
-}
-
 export async function POST(request: Request) {
   const session = await requireActiveSession();
   if (!session.ok) return session.response;
@@ -111,7 +37,11 @@ export async function POST(request: Request) {
 
   let payload: SavePayload;
   try {
-    payload = (await request.json()) as SavePayload;
+    const input: unknown = await request.json();
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      return NextResponse.json({ message: "Dados do cadastro inválidos." }, { status: 400 });
+    }
+    payload = input as SavePayload;
   } catch {
     return NextResponse.json(
       { message: "Não foi possível ler os dados do cadastro. Revise o formulário." },
@@ -121,13 +51,13 @@ export async function POST(request: Request) {
 
   const viatura = payload.viatura;
   const placaRaw = typeof viatura?.placa === "string" ? viatura.placa : "";
-  const placa = normalizePlate(placaRaw);
+  const placa = placaRaw.toUpperCase();
   const tipo = viatura?.tipo;
   const answers = payload.checkin?.answers;
 
-  if (!/^[A-Z]{3}[0-9][A-Z][0-9]{2}$/.test(placa)) {
+  if (!isStrictMercosulPlate(placa)) {
     return NextResponse.json(
-      { message: "Digite uma placa válida no formato ABC-1D23." },
+      { message: "Placa inválida. Use o formato KKK5K55." },
       { status: 400 },
     );
   }
@@ -137,6 +67,8 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
+  const inspectionError = validateInspectionAnswers(answers, tipo);
+  if (inspectionError) return NextResponse.json({ message: inspectionError }, { status: 400 });
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
     return NextResponse.json(
       { message: "Preencha os campos obrigatórios do check-in inicial." },
@@ -153,7 +85,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const requiredFields = allowedChecklistFields(tipo);
+  const requiredFields = inspectionFields(tipo);
   for (const [field, options] of Object.entries(requiredFields)) {
     if (
       typeof checkinAnswers[field] !== "string" ||
@@ -184,10 +116,12 @@ export async function POST(request: Request) {
     }
   }
 
-  const photos = preparePhotos(payload.checkin?.photos);
-  if (!photos) {
+  let photos: PreparedInspectionPhoto[];
+  try {
+    photos = prepareInspectionPhotos(payload.checkin?.photos);
+  } catch (error) {
     return NextResponse.json(
-      { message: "Uma das fotos do check-in não pôde ser processada. Remova-a e tente novamente." },
+      { message: error instanceof Error ? error.message : "Fotos inválidas." },
       { status: 400 },
     );
   }
@@ -280,7 +214,7 @@ export async function POST(request: Request) {
 
       const { error: fotoError } = await supabase
         .from("fotos_registro_vtr")
-        .insert({ registro_id: registroId, caminho_storage: path })
+        .insert({ registro_id: registroId, caminho_storage: path, categoria: photo.categoria })
         .select("id")
         .single();
       if (fotoError) throw fotoError;

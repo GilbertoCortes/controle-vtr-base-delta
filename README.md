@@ -138,6 +138,105 @@ leitura do próprio perfil deve funcionar e `PATCH /rest/v1/profiles?id=eq.<id>`
 deve falhar com permissão negada. Com administrador ativo, valide edição,
 criação e ativação/desativação pelas APIs administrativas do app.
 
+### Check-in categorizado e retirada com relatório final
+
+A migration
+[`202610100001_inspections_and_final_report.sql`](supabase/migrations/202610100001_inspections_and_final_report.sql)
+deve ser revisada e aplicada **manualmente**, depois das migrations anteriores,
+em janela de manutenção com o app sem gravações. Nenhuma migration é aplicada
+remotamente pelo código ou pelos testes; não há deploy automático.
+Ela recusa instalação se houver exclusões antigas pendentes.
+
+- `fotos_registro_vtr.categoria` é nullable para preservar fotos antigas.
+  As categorias novas são Frente, Lateral direita/esquerda, Traseira, Painel,
+  Equipamentos e Avarias. Um índice parcial impede duplicatas nas seis
+  categorias únicas; Avarias continua sem limite de quantidade.
+- Pintura e Lataria são obrigatórias e ficam no `registros_vtr.checklist`
+  JSON existente, sem novas colunas ou alteração retroativa de inspeções antigas.
+- `registros_vtr.tipo_registro` passa a aceitar `vistoria_final`.
+- `retiradas_vtr` guarda apenas estado técnico e hashes do relatório/recibo.
+  Não armazena PDF, cópia de VTR ou histórico removido. É apagada por cascade.
+  Acesso é exclusivo do servidor; RPCs conferem ADMIN ativo.
+- A migration é transacional (`BEGIN`/`COMMIT`) e só altera `public`.
+  `storage.objects` continua somente leitura via SQL.
+
+O cadastro exige placa Mercosul estrita (`KKK5K55`), converte letras para
+maiúsculas e rejeita hífen/espaços/formato antigo. Placas já cadastradas não são
+reescritas. UI e API exigem as seis fotos, Pintura, Lataria e os itens anteriores.
+Fotos únicas podem ser removidas ou substituídas; Avarias pode receber uma ou
+várias fotos por seleção, sem limite de contagem. Imagens da câmera/galeria são
+redimensionadas para JPEG no navegador e seguem no bucket `fotos-vtr`.
+Rascunhos antigos sem categoria exigem recaptura/reseleção, com aviso explícito.
+
+**Retirada definitiva:**
+
+1. Somente ADMIN ativo abre a vistoria final e a salva em
+   `POST /api/viaturas/<id>/vistoria-final`. Usa o mesmo formulário/checklist.
+   A fase técnica `fotos` passa a `pronta` somente depois de todos os uploads e
+   metadados confirmados, incluindo todas as avarias. Enquanto houver envio,
+   outra sessão não poderá selar a vistoria ou gerar o relatório.
+2. Novas gravações desta VTR são bloqueadas pelas tabelas `public`; outras
+   VTRs, baixa e recebimento normais permanecem com os fluxos anteriores.
+3. `GET /api/viaturas/<id>/relatorio-final` sela o histórico e gera um PDF
+   estrito, cronológico, com todos os eventos, responsáveis disponíveis e
+   **todas** as fotos. Qualquer falha de consulta/foto/geração impede o recibo.
+   Consultas são paginadas com contagem exata e ordenação estável; o limite
+   padrão do Supabase não pode truncar silenciosamente o histórico/fotos.
+   Essa API não exclui dados nem arquivos.
+4. O navegador recebe o Blob integral e verifica tipo, assinatura, tamanho e
+   SHA-256. Somente então exibe **Baixar / Salvar PDF completo**.
+5. Sob gesto explícito, usa compartilhamento de arquivo quando disponível
+   (celular), ou download convencional. Cancelamento/erro preserva os dados.
+   O ADMIN deve marcar **“Salvei o PDF completo e verifiquei que consigo
+   abri-lo”** e aceitar a confirmação irreversível.
+6. Só então a UI chama `DELETE /api/viaturas/<id>` com o recibo vinculado à
+   VTR e ao ADMIN. O servidor exige vistoria, relatório registrado e recibo
+   válido antes de chamar a rotina anterior de exclusão. Storage é limpo
+   exclusivamente pela API, seguido de cascade no banco.
+   A proteção do snapshot permite a limpeza pelo servidor (`service_role`)
+   somente com retirada `autorizada`, hashes/tamanho do PDF registrados e
+   exclusão preparada em `exclusoes_vtr`. Nas fases `pronta`, `selada` ou
+   `autorizada` sem exclusão preparada, DELETE de históricos/fotos é rejeitado.
+   A exceção não é concedida a clientes autenticados comuns.
+
+**Limite do navegador:** JavaScript não comprova que o sistema operacional
+salvou um arquivo no disco. A confirmação humana é obrigatória em todos os
+navegadores, especialmente Safari/iPhone e Chrome/Android. Nunca confirme se
+o arquivo não estiver realmente salvo e legível. Não há exclusão automática
+depois de gerar ou clicar em um download. PDF/recibo ficam em memória:
+mantenha a página aberta até finalizar ou retentar uma exclusão que falhou.
+Se uma limpeza parcial falhar, retente na mesma página com o PDF já salvo;
+se a página for perdida, suporte administrativo deverá retomar a fila técnica
+autorizada, sem recriar ou restaurar a VTR.
+
+Falha de upload tenta remover todos os caminhos da própria vistoria e cancelar
+seu registro incompleto. Se a Storage API estiver indisponível, a retirada
+permanece bloqueada e a interface informa a necessidade de suporte; não
+apaga a VTR nem mascara a falha. Uploads de baixa/recebimento em andamento
+mantêm seu rollback existente: metadado novo é rejeitado e os caminhos tentados
+são removidos pela API. Falhas de infraestrutura exigem retomada explícita.
+
+O antigo quadro separado de entrada foi removido. O check-in permanece no
+histórico, com seus dados/fotos. PDFs individuais existentes não foram alterados.
+Depois de instalar esta migration, não use o antigo script de limpeza legada
+para iniciar novas exclusões: ele não gera vistoria/relatório e será bloqueado.
+Qualquer limpeza de arquivados anterior deve ser concluída **antes**.
+
+Validação local:
+
+```bash
+node --test tests/inspection-retirement.test.mjs tests/vtr-deletion.test.mjs tests/profiles-permissions.test.mjs tests/vtr-links-prefetch.test.mjs
+npm run lint
+npx next typegen && npx tsc --noEmit
+npm run build:vinext
+node --test tests/registro-pdf-worker.test.mjs
+```
+
+Os testes móveis simulam compartilhamento, cancelamento e user agents no
+Worker. Antes de publicar, testar em Safari/iPhone e Chrome/Android reais:
+câmera, substituição, várias avarias, download/salvamento, abrir o PDF salvo,
+cancelamento e ausência de exclusão quando o arquivo não foi salvo.
+
 ### Prefetch dos detalhes de VTR no Cloudflare
 
 Os cartões da lista principal usam `prefetch={false}` somente nos links
@@ -188,7 +287,10 @@ O botão de retirar VTR mantém o acesso exclusivo de ADMIN e pede confirmação
 “Esta ação excluirá permanentemente esta VTR, todo o seu histórico e todas as
 fotos vinculadas. Esta ação não poderá ser desfeita.”
 `DELETE /api/viaturas/<id>` exige administrador ativo e o corpo
-`{"confirmacao":"EXCLUIR DEFINITIVAMENTE"}`. Não há tela de VTRs removidas,
+`{"confirmacao":"EXCLUIR DEFINITIVAMENTE","recibo":"<recibo-do-relatorio>","pdfSalvo":true}`.
+O recibo só é emitido após a vistoria e geração integral do relatório;
+a UI exige entrega do Blob, download e confirmação de salvamento.
+Não há tela de VTRs removidas,
 arquivamento lógico ou restauração.
 
 O servidor prepara a operação, remove fisicamente os arquivos pela **API do
@@ -207,8 +309,9 @@ erro explícito, conserva a operação para retomada e impede novos históricos,
 metadados de fotos ou alterações naquela VTR pelas tabelas `public`.
 Não há triggers ou alterações estruturais no schema gerenciado `storage`:
 `storage.objects` é consultada somente com SELECT; arquivos são gravados e
-removidos exclusivamente pela Storage API. Retirar a mesma VTR novamente retoma
-a limpeza. O cadastro pode permanecer visível até a conclusão, mas não pode
+removidos exclusivamente pela Storage API. Reenviar a confirmação com o mesmo
+recibo, na página que conserva o PDF recebido, retoma a limpeza.
+O cadastro pode permanecer visível até a conclusão, mas não pode
 receber novas gravações. O sucesso só é retornado após verificar que não há
 objetos restantes no Storage e excluir o cadastro e seus dependentes;
 a operação técnica também é apagada. Não exclua manualmente essa fila nem

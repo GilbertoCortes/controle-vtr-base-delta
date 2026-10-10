@@ -8,6 +8,12 @@ function compile(source) {
   return ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 }
 
+const inspectionModule = { exports: {} };
+vm.runInNewContext(compile(readFileSync('lib/vtr-inspection.ts', 'utf8')), {
+  module: inspectionModule, exports: inspectionModule.exports,
+});
+const { inspectionFields, inspectionCategories, validateInspectionAnswers, validateInspectionPhotos } = inspectionModule.exports;
+
 test('Quota cheia remove somente o rascunho antigo da operação e permite nova gravação', () => {
   const entries = new Map();
   let full = false;
@@ -46,10 +52,18 @@ for (const file of ['initial-checkin-form', 'baixa-vtr-form', 'recebimento-ofici
       assert.ok(handler);
       const requests = [];
       const errors = [];
-      const photos = [{ dataUrl: 'data:image/jpeg;base64,YQ==' }];
+      const photos = file === 'initial-checkin-form'
+        ? inspectionCategories.filter(category => category.value !== 'avarias')
+          .map(category => ({ categoria: category.value, dataUrl: 'data:image/jpeg;base64,YQ==' }))
+        : [{ dataUrl: 'data:image/jpeg;base64,YQ==' }];
+      const answers = {
+        ...Object.fromEntries(Object.entries(inspectionFields('Viatura')).map(([field, options]) => [field, options[0]])),
+        km_atual: '123',
+      };
       const context = {
-        viatura: { id: 'fixture' }, isSubmitting: false, submitting: false, completed: false,
-        answers: { km_atual: '123' }, photos, observacoes: 'observação', motivoObservacoes: 'manutenção',
+        viatura: { id: 'fixture', tipo: 'Viatura' }, isSubmitting: false, submitting: false, completed: false,
+        isPreparingPhotos: false, finalViatura: undefined, validateInspectionAnswers, validateInspectionPhotos,
+        answers, photos, observacoes: 'observação', motivoObservacoes: 'manutenção',
         cpfDigits: '12345678901', reparosRealizados: 'Sim', descricaoReparos: 'freios',
         empresa: 'oficina', responsavelEntrega: 'teste',
         persist: () => storageWorks, persistCheckin: () => storageWorks,

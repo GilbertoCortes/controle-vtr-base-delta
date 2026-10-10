@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { getAdminSession } from "@/lib/supabase/admin";
 import { DeleteViaturaButton } from "@/components/delete-viatura-button";
 import { formatPlate } from "@/lib/plate";
+import { inspectionCategories } from "@/lib/vtr-inspection";
 
 type Viatura = {
   id: string | number;
@@ -38,6 +39,7 @@ type Foto = {
   caminho_storage: string;
   descricao: string | null;
   criado_em: string;
+  categoria: string | null;
 };
 
 type FotoAssinada = {
@@ -64,6 +66,8 @@ type PerfilFuncional = {
 };
 
 const checklistLabels: Record<string, string> = {
+  pintura: "Pintura",
+  lataria: "Lataria",
   km_atual: "KM",
   combustivel: "Combustível",
   oleo_motor: "Óleo do motor",
@@ -131,6 +135,7 @@ function FunctionalProfileDetails({
 
 function formatRegistroType(value: string) {
   if (value === "checkin_inicial") return "Check-in/Entrada de VTR";
+  if (value === "vistoria_final") return "Vistoria Final de Retirada";
   if (value === "recebimento") return "Recebida da Oficina";
   return displayValue(value);
 }
@@ -197,7 +202,7 @@ async function ViaturaDetailsContent({
   if (registroIds.length > 0) {
     const { data: fotosData, error: fotosQueryError } = await supabase
       .from("fotos_registro_vtr")
-      .select("id, registro_id, caminho_storage, descricao, criado_em")
+      .select("id, registro_id, caminho_storage, descricao, criado_em, categoria")
       .in("registro_id", registroIds)
       .order("criado_em", { ascending: true });
     fotosError = Boolean(fotosQueryError);
@@ -209,10 +214,11 @@ async function ViaturaDetailsContent({
         .from("fotos-vtr")
         .createSignedUrl(foto.caminho_storage, 60 * 60);
       if (error) fotosError = true;
+      const categoria = inspectionCategories.find((item) => item.value === foto.categoria)?.label;
       return {
         id: foto.id,
         registro_id: foto.registro_id,
-        descricao: foto.descricao,
+        descricao: categoria ? (foto.descricao ? `${categoria}: ${foto.descricao}` : categoria) : foto.descricao,
         url: data?.signedUrl ?? null,
       };
     }),
@@ -225,9 +231,6 @@ async function ViaturaDetailsContent({
   const situacao = viatura.situacao.trim().toUpperCase();
   const isAtiva = situacao === "ATIVA";
   const isBaixada = situacao === "BAIXADA";
-  const checkinEntrada = [...registros]
-    .filter((registro) => registro.tipo_registro === "checkin_inicial")
-    .sort((left, right) => new Date(left.criado_em).getTime() - new Date(right.criado_em).getTime())[0] ?? null;
   const historico: HistoricoItem[] = [];
   let baixaPendente: Registro | null = null;
 
@@ -428,19 +431,6 @@ async function ViaturaDetailsContent({
       </dl>
 
       <section className="space-y-4">
-        <h2 className="text-xl font-semibold text-[#f3f4ef]">Check-in/Entrada de VTR</h2>
-        {checkinEntrada ? (
-          <article className="rounded-md border border-white/10 bg-[#192222] p-4 sm:p-5">
-            {renderRegistro(checkinEntrada, "checkin")}
-          </article>
-        ) : (
-          <p className="rounded-md border border-white/10 bg-[#192222] p-4 text-sm text-[#bdc9c3]">
-            Não há registro de entrada disponível para esta VTR.
-          </p>
-        )}
-      </section>
-
-      <section className="space-y-4">
         <h2 className="text-xl font-semibold text-[#f3f4ef]">Histórico</h2>
         {recordsError ? (
           <p role="alert" className="text-sm text-[#f0aaa2]">
@@ -457,34 +447,9 @@ async function ViaturaDetailsContent({
                     {item.recebimento && renderRegistro(item.recebimento, "recebimento")}
                     {item.recebimento && item.baixa && <hr className="border-white/10" />}
                     {item.baixa && renderRegistro(item.baixa, "baixa")}
-                    {item.registro?.tipo_registro === "checkin_inicial" ? (
-                      <section className="space-y-2">
-                        <h3 className="text-sm font-bold tracking-wide text-[#f3f4ef]">
-                          ENTRADA INICIAL / CHECK-IN
-                        </h3>
-                        <dl className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
-                          <div>
-                            <dt className="text-xs text-[#91a19a]">Data e hora</dt>
-                            <dd className="text-[#e0e8e3]">
-                              {formatEventDate(item.registro.criado_em)} às {formatEventTime(item.registro.criado_em)}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs text-[#91a19a]">Responsável</dt>
-                            <dd className="text-[#e0e8e3]">
-                              {displayValue(item.registro.usuario_id ? profilesById.get(item.registro.usuario_id)?.nome_completo ?? null : null)}
-                            </dd>
-                          </div>
-                          <div>
-                            <dt className="text-xs text-[#91a19a]">KM</dt>
-                            <dd className="text-[#e0e8e3]">
-                              {displayValue(item.registro.km ?? item.registro.checklist?.km_atual)} km
-                            </dd>
-                          </div>
-                        </dl>
-                      </section>
-                    ) : item.registro && renderRegistro(
+                    {item.registro && renderRegistro(
                       item.registro,
+                      item.registro.tipo_registro === "checkin_inicial" ? "checkin" :
                       item.registro.tipo_registro === "baixa" || item.registro.tipo_registro === "recebimento"
                         ? item.registro.tipo_registro
                         : undefined,

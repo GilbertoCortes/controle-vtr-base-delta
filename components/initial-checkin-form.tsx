@@ -13,6 +13,7 @@ import {
 } from "@/lib/vtr-draft";
 import { getDraftUserId, loadDraft, removeDraft, saveDraft } from "@/lib/draft-storage";
 import { formatPlate } from "@/lib/plate";
+import { inspectionCategories, isInspectionCategory, validateInspectionAnswers, validateInspectionPhotos, type InspectionCategory } from "@/lib/vtr-inspection";
 
 const conditionOptions = ["OK", "Ruim"];
 const possessionOptions = ["Possui", "Não possui"];
@@ -145,10 +146,13 @@ function isViaturaDraft(value: unknown): value is ViaturaDraft {
   );
 }
 
-export function InitialCheckinForm() {
+export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
+  finalViatura?: ViaturaDraft & { id: string };
+  onFinalSaved?: () => void;
+} = {}) {
   const router = useRouter();
-  const [loaded, setLoaded] = useState(false);
-  const [viatura, setViatura] = useState<ViaturaDraft | null>(null);
+  const [loaded, setLoaded] = useState(Boolean(finalViatura));
+  const [viatura, setViatura] = useState<ViaturaDraft | null>(finalViatura ?? null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [observacoes, setObservacoes] = useState("");
   const [photos, setPhotos] = useState<CheckinPhoto[]>([]);
@@ -157,11 +161,12 @@ export function InitialCheckinForm() {
   const [completed, setCompleted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
-  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const [isPreparingPhotos, setIsPreparingPhotos] = useState(false);
+  const preparingPhotosRef = useRef(false);
   const userIdRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (finalViatura) return;
     let active = true;
     void getDraftUserId().then((uid) => {
       if (!active) return;
@@ -182,7 +187,10 @@ export function InitialCheckinForm() {
               setObservacoes(parsedCheckin.observacoes);
             }
             if (Array.isArray(parsedCheckin.photos)) {
-              setPhotos(parsedCheckin.photos);
+              setPhotos(parsedCheckin.photos.filter((photo) => isInspectionCategory(photo.categoria)));
+              if (parsedCheckin.photos.some((photo) => !isInspectionCategory(photo.categoria))) {
+                setPhotoError("O rascunho antigo contém fotos sem categoria. Adicione novamente as fotos nas categorias correspondentes.");
+              }
             }
           }
         }
@@ -195,13 +203,14 @@ export function InitialCheckinForm() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [finalViatura]);
 
   function persistCheckin(
     nextAnswers: Record<string, string>,
     nextObservacoes: string,
     nextPhotos: CheckinPhoto[],
   ) {
+    if (finalViatura) return true;
     const uid = userIdRef.current;
     if (!uid) return false;
     const draft: CheckinDraft = {
@@ -229,19 +238,27 @@ export function InitialCheckinForm() {
     setSubmitError(null);
   }
 
-  async function addPhotos(files: File[]) {
-    if (files.length === 0) return;
+  async function addPhotos(files: File[], categoria: InspectionCategory) {
+    if (files.length === 0 || preparingPhotosRef.current) return;
+    preparingPhotosRef.current = true;
     setPhotoError(null);
+    setIsPreparingPhotos(true);
 
     try {
-      const newPhotos = await Promise.all(files.map(createPhotoPreview));
-      const nextPhotos = [...photos, ...newPhotos];
+      const selected = categoria === "avarias" ? files : files.slice(0, 1);
+      const newPhotos: CheckinPhoto[] = [];
+      for (const file of selected) newPhotos.push({ ...await createPhotoPreview(file), categoria });
+      const nextPhotos = categoria === "avarias" ? [...photos, ...newPhotos] :
+        [...photos.filter((photo) => photo.categoria !== categoria), ...newPhotos];
       setPhotos(nextPhotos);
       persistCheckin(answers, observacoes, nextPhotos);
       setCompleted(false);
       setSubmitError(null);
     } catch {
       setPhotoError("Não foi possível preparar uma das imagens. Tente outra foto.");
+    } finally {
+      preparingPhotosRef.current = false;
+      setIsPreparingPhotos(false);
     }
   }
 
@@ -255,7 +272,9 @@ export function InitialCheckinForm() {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!viatura || isSubmitting || completed) return;
+    if (!viatura || isSubmitting || completed || isPreparingPhotos) return;
+    const validation = validateInspectionAnswers(answers, viatura.tipo) ?? validateInspectionPhotos(photos);
+    if (validation) { setSubmitError(validation); return; }
     // O envio usa os dados em memória mesmo quando o armazenamento está cheio.
     persistCheckin(answers, observacoes, photos);
 
@@ -264,10 +283,10 @@ export function InitialCheckinForm() {
     setSubmitError(null);
 
     try {
-      const response = await fetch("/api/viaturas/cadastro", {
+      const response = await fetch(finalViatura ? `/api/viaturas/${finalViatura.id}/vistoria-final` : "/api/viaturas/cadastro", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(finalViatura ? { answers, observacoes, photos } : {
           viatura: {
             placa: viatura.placa,
             tipo: viatura.tipo,
@@ -295,6 +314,11 @@ export function InitialCheckinForm() {
         return;
       }
 
+      if (finalViatura) {
+        setCompleted(true);
+        onFinalSaved?.();
+        return;
+      }
       if (userIdRef.current) {
         removeDraft(userIdRef.current, viaturaDraftScope);
         removeDraft(userIdRef.current, checkinDraftScope);
@@ -368,6 +392,8 @@ export function InitialCheckinForm() {
           />
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
+          <ChoiceField name="pintura" label="Pintura" options={["Boa", "Ruim"]} value={answers.pintura} onChange={updateAnswer} />
+          <ChoiceField name="lataria" label="Lataria" options={["Boa", "Ruim"]} value={answers.lataria} onChange={updateAnswer} />
           <ChoiceField
             name="oleo_motor"
             label="Óleo do motor"
@@ -461,79 +487,43 @@ export function InitialCheckinForm() {
       </section>
 
       <section className="space-y-4">
-        <div>
-          <h2 className="text-lg font-semibold text-[#f3f4ef]">
-            Fotos da VTR / Avarias
-          </h2>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <label
-            htmlFor="camera-photos"
-            className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-md border border-[#40514c] px-4 text-sm font-semibold text-[#e0e8e3] transition-colors hover:bg-white/5 focus-within:ring-2 focus-within:ring-[#d5b45b]"
-          >
-            Tirar foto
-          </label>
-          <input
-            ref={cameraInputRef}
-            id="camera-photos"
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="sr-only"
-            onChange={(event) => {
-              const files = Array.from(event.currentTarget.files ?? []);
-              event.currentTarget.value = "";
-              void addPhotos(files);
-            }}
-          />
-          <label
-            htmlFor="gallery-photos"
-            className="inline-flex min-h-12 cursor-pointer items-center justify-center rounded-md border border-[#40514c] px-4 text-sm font-semibold text-[#e0e8e3] transition-colors hover:bg-white/5 focus-within:ring-2 focus-within:ring-[#d5b45b]"
-          >
-            Selecionar da galeria
-          </label>
-          <input
-            ref={galleryInputRef}
-            id="gallery-photos"
-            type="file"
-            accept="image/*"
-            multiple
-            className="sr-only"
-            onChange={(event) => {
-              const files = Array.from(event.currentTarget.files ?? []);
-              event.currentTarget.value = "";
-              void addPhotos(files);
-            }}
-          />
-        </div>
+        <h2 className="text-lg font-semibold text-[#f3f4ef]">Fotos da vistoria</h2>
+        {inspectionCategories.map((category) => (
+          <fieldset key={category.value} disabled={isSubmitting || isPreparingPhotos || completed}
+            className="space-y-3 rounded-md border border-white/10 bg-[#192222] p-4">
+            <legend className="text-sm font-semibold text-[#e0e8e3]">
+              {category.label} {category.value !== "avarias" && <span className="text-[#d5b45b]">*</span>}
+            </legend>
+            <p className="text-xs text-[#a9b8b1]">{category.value === "avarias" ? "Opcional. Adicione quantas fotos forem necessárias." : "Exatamente uma foto. Adicionar outra substitui a anterior."}</p>
+            <div className="flex flex-wrap gap-3">
+              {["camera", "galeria"].map((source) => (
+                <label key={source} className="inline-flex min-h-12 cursor-pointer items-center rounded-md border border-[#40514c] px-4 text-sm text-[#e0e8e3]">
+                  {source === "camera" ? "Tirar foto" : category.value === "avarias" ? "Adicionar fotos" : "Adicionar / substituir foto"}
+                  <input type="file" accept="image/*" capture={source === "camera" ? "environment" : undefined}
+                    multiple={source === "galeria" && category.value === "avarias"} className="sr-only"
+                    onChange={(event) => {
+                      const files = Array.from(event.currentTarget.files ?? []);
+                      event.currentTarget.value = "";
+                      void addPhotos(files, category.value);
+                    }} />
+                </label>
+              ))}
+            </div>
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {photos.filter((photo) => photo.categoria === category.value).map((photo) => (
+                <li key={photo.id} className="relative aspect-[4/3] overflow-hidden rounded-md border border-white/10">
+                  <Image src={photo.dataUrl} alt={`${category.label}: ${photo.name}`} fill unoptimized sizes="(max-width: 640px) 50vw, 33vw" className="object-cover" />
+                  <button type="button" onClick={() => removePhoto(photo.id)} aria-label={`Remover foto de ${category.label}`}
+                    className="absolute right-2 top-2 flex size-9 items-center justify-center rounded-full bg-[#101719]/90 text-white">
+                    <X aria-hidden="true" className="size-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </fieldset>
+        ))}
+        {isPreparingPhotos && <p role="status" className="text-sm text-[#a9b8b1]">Preparando fotos...</p>}
         {photoError && <p role="alert" className="text-sm text-[#f0aaa2]">{photoError}</p>}
-        {photos.length > 0 && (
-          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {photos.map((photo, index) => (
-              <li
-                key={photo.id}
-                className="relative aspect-[4/3] overflow-hidden rounded-md border border-white/10 bg-[#141d1d]"
-              >
-                <Image
-                  src={photo.dataUrl}
-                  alt={`Foto ${index + 1}: ${photo.name}`}
-                  fill
-                  unoptimized
-                  sizes="(max-width: 640px) 50vw, 33vw"
-                  className="object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={() => removePhoto(photo.id)}
-                  aria-label={`Remover foto ${index + 1}`}
-                  className="absolute right-2 top-2 flex size-9 items-center justify-center rounded-full bg-[#101719]/90 text-white hover:bg-[#bd4c4b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
-                >
-                  <X aria-hidden="true" className="size-4" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
       </section>
 
       {storageError && (
@@ -548,17 +538,17 @@ export function InitialCheckinForm() {
       )}
       {completed && (
         <p role="status" className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-300">
-          VTR cadastrada com sucesso.
+          {finalViatura ? "Vistoria final salva." : "VTR cadastrada com sucesso."}
         </p>
       )}
 
       <div>
         <button
           type="submit"
-          disabled={isSubmitting || completed}
+          disabled={isSubmitting || completed || isPreparingPhotos || Boolean(validateInspectionPhotos(photos))}
           className="min-h-14 w-full rounded-md bg-[#d5b45b] px-5 text-sm font-bold text-[#17201e] transition-colors hover:bg-[#e2c675] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e2c675] focus-visible:ring-offset-2 focus-visible:ring-offset-[#101719] disabled:cursor-wait disabled:opacity-60"
         >
-          {isSubmitting ? "SALVANDO CADASTRO..." : "CONCLUIR CADASTRO"}
+          {isSubmitting ? "SALVANDO..." : finalViatura ? "CONCLUIR VISTORIA FINAL" : "CONCLUIR CADASTRO"}
         </button>
       </div>
     </form>
