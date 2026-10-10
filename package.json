@@ -50,5 +50,12 @@
     "typescript": "^5",
     "vite": "^8.3.0"
   },
-  "type": "module"
+  "type": "module",
+  "overrides": {
+    "sharp": "0.35.5",
+    "postcss-selector-parser": "7.1.6",
+    "satori": {
+      "fflate": "0.7.5"
+    }
+  }
 }

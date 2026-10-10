@@ -45,6 +45,8 @@ export function saveDraft<T>(userId: string, scope: string, data: T): boolean {
     sessionStorage.setItem(keyFor(userId, scope), JSON.stringify(envelope));
     return true;
   } catch {
+    // Não restaure uma versão antiga como se fosse o formulário atual.
+    removeDraft(userId, scope);
     return false;
   }
 }
