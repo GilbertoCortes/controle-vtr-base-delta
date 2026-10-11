@@ -13,6 +13,8 @@ const recordId = "00000000-0000-4000-8000-000000000003";
 const otherRecordId = "00000000-0000-4000-8000-000000000004";
 const migration = readFileSync("supabase/migrations/202610080002_vtr_permanent_deletion.sql", "utf8");
 const cleanup = readFileSync("supabase/migrations/202610080003_remove_vtr_archive_columns.sql", "utf8");
+const activityMigration = readFileSync("supabase/migrations/202610100002_activity_numbers.sql", "utf8");
+const atomicOperationMigration = readFileSync("supabase/migrations/202610110001_atomic_baixa_recebimento.sql", "utf8");
 const answers = {
   km_atual: 100, combustivel: "Cheio", oleo_motor: "Bom", liquido_arrefecimento: "Bom",
   pintura: "Boa", lataria: "Boa",
@@ -561,10 +563,66 @@ function apiDatabaseClient(db, files, { privileged = false, beforeUpload, afterU
     }
   }
   return {
-    rpc: async (name, { target_id }) => {
-      assert.ok(["preparar_exclusao_vtr", "concluir_exclusao_vtr"].includes(name));
-      const { rows } = await query(`SELECT public.${name}($1) AS result`, [target_id]);
-      return { data: rows[0].result, error: null };
+    rpc: async (name, params) => {
+      try {
+        if (name === "preparar_exclusao_vtr" || name === "concluir_exclusao_vtr") {
+          const { rows } = await query(
+            `SELECT public.${name}($1) AS result`,
+            [params.target_id],
+          );
+          return { data: rows[0].result, error: null };
+        }
+
+        if (name === "concluir_baixa_vtr") {
+          const { rows } = await query(
+            `SELECT public.concluir_baixa_vtr(
+              $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10::text[]
+            ) AS result`,
+            [
+              params.target_id,
+              params.actor_id,
+              params.novo_registro_id,
+              params.km_atual,
+              params.combustivel_valor,
+              params.oleo_valor,
+              params.arrefecimento_valor,
+              JSON.stringify(params.dados),
+              params.motivo,
+              params.caminhos_fotos,
+            ],
+          );
+          return { data: rows[0].result, error: null };
+        }
+
+        if (name === "concluir_recebimento_vtr") {
+          const { rows } = await query(
+            `SELECT public.concluir_recebimento_vtr(
+              $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14::text[]
+            ) AS result`,
+            [
+              params.target_id,
+              params.actor_id,
+              params.novo_registro_id,
+              params.km_atual,
+              params.combustivel_valor,
+              params.oleo_valor,
+              params.arrefecimento_valor,
+              JSON.stringify(params.dados),
+              params.reparos,
+              params.descricao_reparos_valor,
+              params.empresa_valor,
+              params.responsavel_valor,
+              params.cpf_valor,
+              params.caminhos_fotos,
+            ],
+          );
+          return { data: rows[0].result, error: null };
+        }
+
+        throw new Error(`RPC inesperada no teste: ${name}`);
+      } catch (error) {
+        return { data: null, error };
+      }
     },
     from: (table) => {
       assert.ok(["viaturas", "registros_vtr", "fotos_registro_vtr"].includes(table));
@@ -643,14 +701,30 @@ async function handlerSchema(db) {
     ALTER TABLE public.viaturas ALTER COLUMN id SET DEFAULT gen_random_uuid();
     ALTER TABLE public.registros_vtr ALTER COLUMN id SET DEFAULT gen_random_uuid();
     ALTER TABLE public.fotos_registro_vtr ALTER COLUMN id SET DEFAULT gen_random_uuid();
-    ALTER TABLE public.viaturas ADD COLUMN motivo_situacao text, ADD COLUMN atualizado_em timestamptz;
+
+    ALTER TABLE public.viaturas
+      ADD COLUMN motivo_situacao text,
+      ADD COLUMN atualizado_em timestamptz;
+
     ALTER TABLE public.registros_vtr
-      ADD COLUMN combustivel text, ADD COLUMN oleo_motor text, ADD COLUMN liquido_arrefecimento text,
-      ADD COLUMN checklist jsonb, ADD COLUMN usuario_id uuid, ADD COLUMN reparos_realizados boolean,
-      ADD COLUMN descricao_reparos text, ADD COLUMN empresa text, ADD COLUMN responsavel_entrega text,
-      ADD COLUMN cpf_responsavel_entrega text;
-    ALTER TABLE public.fotos_registro_vtr ADD COLUMN categoria text;
+      ADD COLUMN combustivel text,
+      ADD COLUMN oleo_motor text,
+      ADD COLUMN liquido_arrefecimento text,
+      ADD COLUMN checklist jsonb,
+      ADD COLUMN usuario_id uuid,
+      ADD COLUMN reparos_realizados boolean,
+      ADD COLUMN descricao_reparos text,
+      ADD COLUMN empresa text,
+      ADD COLUMN responsavel_entrega text,
+      ADD COLUMN cpf_responsavel_entrega text,
+      ADD COLUMN criado_em timestamptz NOT NULL DEFAULT now();
+
+    ALTER TABLE public.fotos_registro_vtr
+      ADD COLUMN categoria text;
   `);
+
+  await db.exec(activityMigration);
+  await db.exec(atomicOperationMigration);
 }
 
 function handlerDependencies(client, adminClient, userId = otherId) {

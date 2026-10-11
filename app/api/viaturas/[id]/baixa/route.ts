@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
-import { KmRegressionError, kmRegressionMessage } from "@/lib/vtr-km";
+import { kmRegressionMessage } from "@/lib/vtr-km";
 import { rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
 
 const photoBucket = "fotos-vtr";
@@ -195,80 +195,74 @@ export async function POST(
     }
   }
 
-  let registroId: string | number | null = null;
+  // O UUID é reservado em memória, mas nenhuma baixa existe no banco ainda.
+  // As fotos são enviadas primeiro; somente depois uma única RPC grava
+  // registro + metadados das fotos + situação da VTR atomicamente.
+  const registroId = randomUUID();
   const attemptedPaths: string[] = [];
 
   try {
-    const { data: registro, error: registroError } = await supabase
-      .from("registros_vtr")
-      .insert({
-        viatura_id: viatura.id,
-        tipo_registro: "baixa",
-        km,
-        combustivel,
-        oleo_motor: oleoMotor,
-        liquido_arrefecimento: liquidoArrefecimento,
-        checklist,
-        usuario_id: user.id,
-      })
-      .select("id")
-      .single();
-    if (registroError) throw registroError;
-    registroId = registro.id;
-
     for (const photo of photos) {
       const path = `${viatura.id}/${registroId}/${randomUUID()}.${photo.extension}`;
       attemptedPaths.push(path);
+
       const { error: uploadError } = await supabase.storage
         .from(photoBucket)
-        .upload(path, photo.bytes, { contentType: photo.contentType, upsert: false });
-      if (uploadError) throw uploadError;
+        .upload(path, photo.bytes, {
+          contentType: photo.contentType,
+          upsert: false,
+        });
 
-      const { error: fotoError } = await supabase
-        .from("fotos_registro_vtr")
-        .insert({ registro_id: registroId, caminho_storage: path })
-        .select("id")
-        .single();
-      if (fotoError) throw fotoError;
+      if (uploadError) throw uploadError;
     }
 
-    const { data: baixada, error: updateError } = await supabase
-      .from("viaturas")
-      .update({
-        situacao: "baixada",
-        quilometragem: km,
-        motivo_situacao: motivo,
-        atualizado_em: new Date().toISOString(),
-      })
-      .eq("id", viatura.id)
-      .eq("situacao", viatura.situacao)
-      .or(`quilometragem.is.null,quilometragem.lte.${km}`)
-      .select("id")
-      .maybeSingle();
-    if (updateError) throw updateError;
-    if (!baixada) {
-      const { data: atual } = await supabase
-        .from("viaturas")
-        .select("quilometragem")
-        .eq("id", viatura.id)
-        .maybeSingle();
-      if (atual && typeof atual.quilometragem === "number" && atual.quilometragem > km) {
-        throw new KmRegressionError(atual.quilometragem);
+    const { error: concluirError } = await supabase.rpc("concluir_baixa_vtr", {
+      target_id: viatura.id,
+      actor_id: user.id,
+      novo_registro_id: registroId,
+      km_atual: km,
+      combustivel_valor: combustivel,
+      oleo_valor: oleoMotor,
+      arrefecimento_valor: liquidoArrefecimento,
+      dados: checklist,
+      motivo,
+      caminhos_fotos: attemptedPaths,
+    });
+
+    if (concluirError) {
+      if (concluirError.message === "KM_REGRESSION") {
+        const { data: atual } = await supabase
+          .from("viaturas")
+          .select("quilometragem")
+          .eq("id", viatura.id)
+          .maybeSingle();
+
+        if (atual && typeof atual.quilometragem === "number") {
+          return NextResponse.json(
+            { message: kmRegressionMessage(atual.quilometragem) },
+            { status: 409 },
+          );
+        }
       }
-      throw new Error("A situação da VTR mudou antes da conclusão da baixa.");
+
+      throw concluirError;
     }
   } catch (error) {
-    const rollbackSucceeded = await rollbackVtrOperation({ viaturaId: viatura.id, registroId, attemptedPaths });
-    if (error instanceof KmRegressionError) {
-      console.error("Regressão de quilometragem bloqueada na baixa", { rollbackSucceeded });
-      return NextResponse.json({ message: error.message }, { status: 409 });
-    }
+    // Se a RPC falhou, a transação PostgreSQL já foi revertida.
+    // O rollback aqui serve principalmente para remover uploads temporários.
+    const rollbackSucceeded = await rollbackVtrOperation({
+      viaturaId: viatura.id,
+      registroId,
+      attemptedPaths,
+    });
+
     console.error("Falha ao baixar VTR", { error, rollbackSucceeded });
+
     return NextResponse.json(
       {
         message: rollbackSucceeded
-          ? "Não foi possível baixar a VTR. Os dados do formulário foram preservados."
-          : "A baixa falhou e a limpeza automática ficou incompleta. Os dados foram preservados; procure o suporte antes de tentar novamente.",
+          ? "Não foi possível baixar a VTR. Nenhuma baixa foi registrada e os dados do formulário foram preservados."
+          : "A baixa não foi registrada, mas a limpeza das fotos temporárias ficou incompleta. Os dados foram preservados; procure o suporte antes de tentar novamente.",
         ...errorFields(error),
       },
       { status: 500 },

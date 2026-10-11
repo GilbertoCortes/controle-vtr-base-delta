@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
-import { KmRegressionError, kmRegressionMessage } from "@/lib/vtr-km";
+import { kmRegressionMessage } from "@/lib/vtr-km";
 import { rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
 
 const conditionOptions = ["OK", "Ruim"];
@@ -204,111 +204,76 @@ export async function POST(
     descricao_reparos: descricaoReparos || null,
   };
 
-  let registroId: string | number | null = null;
+  // Reserva um UUID em memória, mas ainda não cria o recebimento no banco.
+  // As fotos são enviadas primeiro; depois uma única RPC grava
+  // registro + metadados + situação da VTR de forma atômica.
+  const registroId = randomUUID();
   const attemptedPaths: string[] = [];
 
   try {
-    const registroValues = {
-      viatura_id: viatura.id,
-      tipo_registro: "recebimento",
-      km,
-      combustivel,
-      oleo_motor: oleoMotor,
-      liquido_arrefecimento: liquidoArrefecimento,
-      checklist,
-      reparos_realizados: reparosBool,
-      descricao_reparos: descricaoReparos || null,
-      empresa,
-      responsavel_entrega: responsavelEntrega,
-      cpf_responsavel_entrega: cpf,
-      usuario_id: user.id,
-    };
-
-    console.log("DADOS INSERT RECEBIMENTO VTR:", {
-      tipo_registro: registroValues.tipo_registro,
-      km: registroValues.km,
-      combustivel: registroValues.combustivel,
-      oleo_motor: registroValues.oleo_motor,
-      liquido_arrefecimento: registroValues.liquido_arrefecimento,
-    });
-
-    const { data: registro, error: registroError } = await supabase
-      .from("registros_vtr")
-      .insert(registroValues)
-      .select("id")
-      .single();
-    if (registroError) {
-      console.error("ERRO RECEBIMENTO VTR:", {
-        message: registroError.message,
-        code: registroError.code,
-        details: registroError.details,
-        hint: registroError.hint,
-      });
-      return NextResponse.json(
-        {
-          message: registroError.message,
-          code: registroError.code,
-          details: registroError.details,
-          hint: registroError.hint,
-        },
-        { status: 500 },
-      );
-    }
-    registroId = registro.id;
-
     for (const photo of photos) {
       const path = `${viatura.id}/${registroId}/${randomUUID()}.${photo.extension}`;
       attemptedPaths.push(path);
+
       const { error: uploadError } = await supabase.storage
         .from("fotos-vtr")
-        .upload(path, photo.bytes, { contentType: photo.contentType, upsert: false });
-      if (uploadError) throw uploadError;
+        .upload(path, photo.bytes, {
+          contentType: photo.contentType,
+          upsert: false,
+        });
 
-      const { error: fotoError } = await supabase
-        .from("fotos_registro_vtr")
-        .insert({ registro_id: registroId, caminho_storage: path })
-        .select("id")
-        .single();
-      if (fotoError) throw fotoError;
+      if (uploadError) throw uploadError;
     }
 
-    const { data: updated, error: updateError } = await supabase
-      .from("viaturas")
-      .update({
-        situacao: "ativa",
-        quilometragem: km,
-        motivo_situacao: null,
-        atualizado_em: new Date().toISOString(),
-      })
-      .eq("id", viatura.id)
-      .eq("situacao", viatura.situacao)
-      .or(`quilometragem.is.null,quilometragem.lte.${km}`)
-      .select("id")
-      .maybeSingle();
-    if (updateError) throw updateError;
-    if (!updated) {
-      const { data: atual } = await supabase
-        .from("viaturas")
-        .select("quilometragem")
-        .eq("id", viatura.id)
-        .maybeSingle();
-      if (atual && typeof atual.quilometragem === "number" && atual.quilometragem > km) {
-        throw new KmRegressionError(atual.quilometragem);
+    const { error: concluirError } = await supabase.rpc("concluir_recebimento_vtr", {
+      target_id: viatura.id,
+      actor_id: user.id,
+      novo_registro_id: registroId,
+      km_atual: km,
+      combustivel_valor: combustivel,
+      oleo_valor: oleoMotor,
+      arrefecimento_valor: liquidoArrefecimento,
+      dados: checklist,
+      reparos: reparosBool,
+      descricao_reparos_valor: descricaoReparos,
+      empresa_valor: empresa,
+      responsavel_valor: responsavelEntrega,
+      cpf_valor: cpf,
+      caminhos_fotos: attemptedPaths,
+    });
+
+    if (concluirError) {
+      if (concluirError.message === "KM_REGRESSION") {
+        const { data: atual } = await supabase
+          .from("viaturas")
+          .select("quilometragem")
+          .eq("id", viatura.id)
+          .maybeSingle();
+
+        if (atual && typeof atual.quilometragem === "number") {
+          return NextResponse.json(
+            { message: kmRegressionMessage(atual.quilometragem) },
+            { status: 409 },
+          );
+        }
       }
-      throw new Error("A situação da VTR mudou antes da conclusão do recebimento.");
+
+      throw concluirError;
     }
   } catch (error) {
-    const rollbackSucceeded = await rollbackVtrOperation({ viaturaId: viatura.id, registroId, attemptedPaths });
-    if (error instanceof KmRegressionError) {
-      console.error("Regressão de quilometragem bloqueada no recebimento", { rollbackSucceeded });
-      return NextResponse.json({ message: error.message }, { status: 409 });
-    }
+    const rollbackSucceeded = await rollbackVtrOperation({
+      viaturaId: viatura.id,
+      registroId,
+      attemptedPaths,
+    });
+
     console.error("Falha ao receber VTR da oficina", { error, rollbackSucceeded });
+
     return NextResponse.json(
       {
         message: rollbackSucceeded
-          ? "Não foi possível receber a VTR. Os dados do formulário foram preservados."
-          : "O recebimento falhou e a limpeza automática ficou incompleta. Os dados foram preservados; procure o suporte antes de tentar novamente.",
+          ? "Não foi possível receber a VTR. Nenhum recebimento foi registrado e os dados do formulário foram preservados."
+          : "O recebimento não foi registrado, mas a limpeza das fotos temporárias ficou incompleta. Os dados foram preservados; procure o suporte antes de tentar novamente.",
         ...errorFields(error),
       },
       { status: 500 },
