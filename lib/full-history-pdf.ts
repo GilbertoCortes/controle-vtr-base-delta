@@ -43,7 +43,15 @@ export async function generateFullHistoryPdf(viatura: ViaturaPdfData, events: Hi
       for (const [index, event] of events.entries()) {
         const r = event.registro;
         doc.addPage();
-        doc.font("Helvetica-Bold").fontSize(14).text(`${index + 1}. ${labels[r.tipoRegistro] ?? r.tipoRegistro}`);
+        const eventLabel = labels[r.tipoRegistro] ?? r.tipoRegistro;
+        const atividadeLabel =
+          r.atividadeNumero !== null &&
+          (r.tipoRegistro === "baixa" || r.tipoRegistro === "recebimento")
+            ? `ATIVIDADE ${r.atividadeNumero} — `
+            : "";
+        doc.font("Helvetica-Bold").fontSize(14).text(
+          `${index + 1}. ${atividadeLabel}${eventLabel}`,
+        );
         doc.moveDown();
         field("Data/hora", new Date(r.criadoEm).toLocaleString("pt-BR"));
         field("KM", r.km);

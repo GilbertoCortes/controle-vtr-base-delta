@@ -3,6 +3,7 @@ import { formatPlate } from "@/lib/plate";
 
 export type RegistroPdfData = {
   tipoRegistro: string;
+  atividadeNumero: number | null;
   criadoEm: string;
   km: number | null;
   combustivel: string | null;
@@ -100,7 +101,12 @@ export function buildPdfFileName(viatura: ViaturaPdfData, registro: RegistroPdfD
   const placa = sanitizeFilePart(formatPlate(viatura.placa));
   const tipo = tipoSlug(registro.tipoRegistro);
   const data = formatDate(registro.criadoEm).replace(/\//g, "-");
-  return `VTR_${placa}_${tipo}_${data}.pdf`;
+  const atividade =
+    registro.atividadeNumero !== null &&
+    (registro.tipoRegistro === "baixa" || registro.tipoRegistro === "recebimento")
+      ? `_ATIVIDADE_${registro.atividadeNumero}`
+      : "";
+  return `VTR_${placa}${atividade}_${tipo}_${data}.pdf`;
 }
 
 export async function generateRegistroPdf(
@@ -165,6 +171,12 @@ export async function generateRegistroPdf(
 
     // Identificacao do evento
     section("Identificação do Evento");
+    if (
+      registro.atividadeNumero !== null &&
+      (registro.tipoRegistro === "baixa" || registro.tipoRegistro === "recebimento")
+    ) {
+      field("Atividade", String(registro.atividadeNumero));
+    }
     field("Tipo do registro", tipoRegistroLabel(registro.tipoRegistro));
     field("Data", formatDate(registro.criadoEm));
     field("Hora", formatTime(registro.criadoEm));

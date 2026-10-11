@@ -34,7 +34,7 @@ export async function GET(
   const { data: registro, error: registroError } = await supabase
     .from("registros_vtr")
     .select(
-      "id, viatura_id, tipo_registro, km, combustivel, oleo_motor, liquido_arrefecimento, checklist, usuario_id, criado_em, reparos_realizados, descricao_reparos, empresa, responsavel_entrega, cpf_responsavel_entrega",
+      "id, viatura_id, tipo_registro, atividade_numero, km, combustivel, oleo_motor, liquido_arrefecimento, checklist, usuario_id, criado_em, reparos_realizados, descricao_reparos, empresa, responsavel_entrega, cpf_responsavel_entrega",
     )
     .eq("id", registroId)
     .eq("viatura_id", viatura.id)
@@ -80,6 +80,7 @@ export async function GET(
 
   const registroPdf: RegistroPdfData = {
     tipoRegistro: registro.tipo_registro,
+    atividadeNumero: registro.atividade_numero ?? null,
     criadoEm: registro.criado_em,
     km: registro.km,
     combustivel: registro.combustivel,

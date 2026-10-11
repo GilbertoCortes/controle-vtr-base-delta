@@ -19,6 +19,7 @@ type Viatura = {
 type Registro = {
   id: string | number;
   tipo_registro: string;
+  atividade_numero: number | null;
   km: number | null;
   combustivel: string | null;
   oleo_motor: string | null;
@@ -178,7 +179,7 @@ async function ViaturaDetailsContent({
   const { data: recordsData, error: recordsError } = await supabase
     .from("registros_vtr")
     .select(
-      "id, tipo_registro, km, combustivel, oleo_motor, liquido_arrefecimento, checklist, usuario_id, criado_em, reparos_realizados, descricao_reparos, empresa, responsavel_entrega, cpf_responsavel_entrega",
+      "id, tipo_registro, atividade_numero, km, combustivel, oleo_motor, liquido_arrefecimento, checklist, usuario_id, criado_em, reparos_realizados, descricao_reparos, empresa, responsavel_entrega, cpf_responsavel_entrega",
     )
     .eq("viatura_id", viatura.id)
     .order("criado_em", { ascending: false });
@@ -272,11 +273,18 @@ async function ViaturaDetailsContent({
     );
     const fotosDoRegistro = fotosByRegistroId.get(String(registro.id)) ?? [];
     const profile = registro.usuario_id ? profilesById.get(registro.usuario_id) : undefined;
+    const atividadeTitulo =
+      registro.atividade_numero !== null &&
+      (tipo === "baixa" || tipo === "recebimento")
+        ? `ATIVIDADE ${registro.atividade_numero} — `
+        : "";
     const titulo = tipo === "checkin"
       ? "CHECK-IN/ENTRADA DE VTR"
       : tipo === "recebimento"
-      ? "VIATURA RECEBIDA DA OFICINA"
-      : tipo === "baixa" ? "BAIXA" : formatRegistroType(registro.tipo_registro).toUpperCase();
+      ? `${atividadeTitulo}VIATURA RECEBIDA DA OFICINA`
+      : tipo === "baixa"
+      ? `${atividadeTitulo}BAIXA`
+      : formatRegistroType(registro.tipo_registro).toUpperCase();
     const detalheLabel = tipo === "baixa"
       ? "Detalhes da baixa"
       : tipo === "recebimento" ? "Detalhes do recebimento" : tipo === "checkin"
@@ -320,6 +328,15 @@ async function ViaturaDetailsContent({
           </summary>
           <div className="space-y-4 border-t border-white/10 p-4">
             <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {registro.atividade_numero !== null &&
+                (tipo === "baixa" || tipo === "recebimento") && (
+                  <div>
+                    <dt className="text-xs text-[#91a19a]">Atividade</dt>
+                    <dd className="text-sm font-semibold text-[#f1d989]">
+                      {registro.atividade_numero}
+                    </dd>
+                  </div>
+                )}
               <div><dt className="text-xs text-[#91a19a]">Tipo do registro</dt><dd className="text-sm text-[#e0e8e3]">{formatRegistroType(registro.tipo_registro)}</dd></div>
               <div><dt className="text-xs text-[#91a19a]">KM</dt><dd className="text-sm text-[#e0e8e3]">{displayValue(registro.km ?? checklist.km_atual)} km</dd></div>
               <div><dt className="text-xs text-[#91a19a]">Combustível</dt><dd className="text-sm text-[#e0e8e3]">{displayValue(registro.combustivel ?? checklist.combustivel)}</dd></div>

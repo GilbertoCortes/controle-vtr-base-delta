@@ -23,7 +23,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { data: viatura, error: viaturaError } = await client.from("viaturas").select("id, placa, tipo").eq("id", id).single();
     if (viaturaError || !viatura || (viatura.tipo !== "Viatura" && viatura.tipo !== "Motocicleta")) throw new Error("Identificação da VTR indisponível.");
     const records = await readCompleteRows((from, to) => client.from("registros_vtr").select(
-      "id, tipo_registro, criado_em, km, combustivel, oleo_motor, liquido_arrefecimento, checklist, usuario_id, reparos_realizados, descricao_reparos, empresa, responsavel_entrega, cpf_responsavel_entrega",
+      "id, tipo_registro, atividade_numero, criado_em, km, combustivel, oleo_motor, liquido_arrefecimento, checklist, usuario_id, reparos_realizados, descricao_reparos, empresa, responsavel_entrega, cpf_responsavel_entrega",
       { count: "exact" },
     ).eq("viatura_id", id).order("criado_em", { ascending: true }).order("id", { ascending: true }).range(from, to));
     if (!records.length) throw new Error("Histórico indisponível.");
@@ -52,7 +52,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       const profile = profiles.find((p) => p.id === r.usuario_id) ?? null;
       const event: HistoryPdfEvent = {
         registro: {
-          tipoRegistro: r.tipo_registro, criadoEm: r.criado_em, km: r.km,
+          tipoRegistro: r.tipo_registro, atividadeNumero: r.atividade_numero ?? null,
+          criadoEm: r.criado_em, km: r.km,
           combustivel: r.combustivel, oleoMotor: r.oleo_motor, liquidoArrefecimento: r.liquido_arrefecimento,
           checklist: r.checklist, reparosRealizados: r.reparos_realizados, descricaoReparos: r.descricao_reparos,
           empresa: r.empresa, responsavelEntrega: r.responsavel_entrega, cpfResponsavelEntrega: r.cpf_responsavel_entrega,
