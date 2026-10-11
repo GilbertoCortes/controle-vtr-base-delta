@@ -252,6 +252,15 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
       }
 
       if (userIdRef.current) removeDraft(userIdRef.current, draftScope);
+
+      // Limpa também o estado em memória para impedir que uma nova
+      // operação reutilize respostas da baixa já concluída.
+      setAnswers({});
+      setMotivoObservacoes("");
+      setPhotos([]);
+      setStorageError(false);
+      setPhotoError(null);
+
       setCompleted(true);
       window.setTimeout(() => {
         router.replace(`/protected/viaturas/${viatura.id}`);

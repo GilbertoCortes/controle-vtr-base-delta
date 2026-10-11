@@ -301,6 +301,20 @@ export function RecebimentoOficinaForm({
       }
 
       if (userIdRef.current) removeDraft(userIdRef.current, draftScope);
+
+      // Limpa também o estado em memória para impedir que uma nova
+      // operação reutilize dados do recebimento já concluído.
+      setAnswers({});
+      setObservacoes("");
+      setReparosRealizados("");
+      setDescricaoReparos("");
+      setEmpresa("");
+      setResponsavelEntrega("");
+      setCpfDigits("");
+      setPhotos([]);
+      setStorageError(false);
+      setPhotoError(null);
+
       setCompleted(true);
       window.setTimeout(() => {
         router.replace(`/protected/viaturas/${viatura.id}`);
