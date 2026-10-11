@@ -219,7 +219,7 @@ for (const [device, agent] of Object.entries({
     assert.match(response.headers.get("x-relatorio-sha256"), /^[a-f0-9]{64}$/);
     assert.match(response.headers.get("content-disposition"), /HISTORICO_COMPLETO_ABC1D23\.pdf/);
     assert.equal(downloads.length, lifePhotos.length);
-    assert.ok((bytes.toString("latin1").match(/\/Type \/Page\b/g) ?? []).length >= 23);
+    assert.ok((bytes.toString("latin1").match(/\/Type \/Page\b/g) ?? []).length >= 21);
     assert.deepEqual(writes, [
       { method: "POST", path: "/rest/v1/rpc/selar_vistoria_final" },
       { method: "PATCH", path: "/rest/v1/retiradas_vtr" },

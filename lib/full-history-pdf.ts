@@ -1,6 +1,10 @@
 import PDFDocument from "pdfkit";
-import { inspectionCategories } from "@/lib/vtr-inspection";
-import type { FotoPdfData, RegistroPdfData, ViaturaPdfData } from "@/lib/registro-pdf";
+import {
+  fotoCategoriaTitulo,
+  type FotoPdfData,
+  type RegistroPdfData,
+  type ViaturaPdfData,
+} from "@/lib/registro-pdf";
 
 export type HistoryPdfEvent = {
   registro: RegistroPdfData;
@@ -74,19 +78,111 @@ export async function generateFullHistoryPdf(viatura: ViaturaPdfData, events: Hi
         for (const [key, value] of Object.entries(r.checklist ?? {})) {
           field(labels[key] ?? key.replaceAll("_", " "), value);
         }
-        for (const [photoIndex, photo] of event.fotos.entries()) {
-          if (!photo.bytes.length) throw new Error("Foto vazia no relatório.");
+        const fotosNormais = event.fotos.filter((photo) => photo.categoria !== "avarias");
+        const fotosAvarias = event.fotos.filter((photo) => photo.categoria === "avarias");
+
+        for (const photo of fotosNormais) {
+          if (!photo.bytes.length) {
+            throw new Error("Foto vazia no relatório.");
+          }
+
           doc.addPage();
-          doc.font("Helvetica-Bold").fontSize(12).text(
-            `${labels[r.tipoRegistro] ?? r.tipoRegistro} - Foto ${photoIndex + 1}`,
-          );
-          const category = inspectionCategories.find((item) => item.value === photo.categoria)?.label;
-          field("Categoria", category ?? photo.categoria ?? "Foto histórica sem categoria");
-          if (photo.descricao) field("Descrição", photo.descricao);
-          // Uma imagem invalida invalida todo o relatorio, sem omitir fotos.
-          if (doc.y > doc.page.height - doc.page.margins.bottom - 200) doc.addPage();
-          const availableHeight = Math.min(560, doc.page.height - doc.page.margins.bottom - doc.y - 10);
-          doc.image(photo.bytes, 45, doc.y + 10, { fit: [doc.page.width - 90, availableHeight] });
+
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(18)
+            .fillColor("#111111")
+            .text(fotoCategoriaTitulo(photo.categoria), {
+              align: "center",
+            });
+
+          doc.moveDown(1);
+
+          if (photo.descricao) {
+            doc
+              .font("Helvetica")
+              .fontSize(9)
+              .fillColor("#666666")
+              .text(photo.descricao, { align: "center" });
+
+            doc.moveDown(0.8);
+          }
+
+          const availableHeight =
+            doc.page.height -
+            doc.page.margins.bottom -
+            doc.y -
+            15;
+
+          doc.image(photo.bytes, doc.page.margins.left, doc.y, {
+            fit: [
+              doc.page.width -
+                doc.page.margins.left -
+                doc.page.margins.right,
+              availableHeight,
+            ],
+            align: "center",
+            valign: "center",
+          });
+        }
+
+        if (fotosAvarias.length) {
+          doc.addPage();
+
+          doc
+            .font("Helvetica-Bold")
+            .fontSize(18)
+            .fillColor("#111111")
+            .text("AVARIAS", { align: "center" });
+
+          doc.moveDown(1);
+
+          for (const [photoIndex, photo] of fotosAvarias.entries()) {
+            if (!photo.bytes.length) {
+              throw new Error("Foto vazia no relatório.");
+            }
+
+            const maxImgHeight = 300;
+
+            if (
+              doc.y + maxImgHeight >
+              doc.page.height - doc.page.margins.bottom
+            ) {
+              doc.addPage();
+
+              doc
+                .font("Helvetica-Bold")
+                .fontSize(18)
+                .fillColor("#111111")
+                .text("AVARIAS", { align: "center" });
+
+              doc.moveDown(1);
+            }
+
+            if (photo.descricao) {
+              doc
+                .font("Helvetica")
+                .fontSize(9)
+                .fillColor("#666666")
+                .text(photo.descricao, { align: "center" });
+
+              doc.moveDown(0.5);
+            }
+
+            doc.image(photo.bytes, {
+              fit: [
+                doc.page.width -
+                  doc.page.margins.left -
+                  doc.page.margins.right,
+                maxImgHeight,
+              ],
+              align: "center",
+            });
+
+            if (photoIndex < fotosAvarias.length - 1) {
+              doc.moveDown(1);
+            }
+          }
         }
       }
       doc.end();

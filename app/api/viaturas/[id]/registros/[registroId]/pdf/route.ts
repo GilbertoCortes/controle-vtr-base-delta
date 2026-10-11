@@ -60,7 +60,7 @@ export async function GET(
   // Fotos vinculadas - baixa no servidor; falha individual nao corrompe o PDF
   const { data: fotosData } = await supabase
     .from("fotos_registro_vtr")
-    .select("caminho_storage, descricao")
+    .select("caminho_storage, descricao, categoria")
     .eq("registro_id", registro.id)
     .order("criado_em", { ascending: true });
 
@@ -72,7 +72,13 @@ export async function GET(
         .download(foto.caminho_storage);
       if (downloadError || !blob) continue; // pula foto que falhou, sem corromper
       const bytes = Buffer.from(await blob.arrayBuffer());
-      if (bytes.length) fotos.push({ bytes, descricao: foto.descricao ?? null });
+      if (bytes.length) {
+        fotos.push({
+          bytes,
+          descricao: foto.descricao ?? null,
+          categoria: foto.categoria ?? null,
+        });
+      }
     } catch {
       continue; // falha individual: ignora a foto
     }

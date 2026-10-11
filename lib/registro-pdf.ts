@@ -26,7 +26,22 @@ export type ViaturaPdfData = {
 export type FotoPdfData = {
   bytes: Buffer;
   descricao: string | null;
+  categoria?: string | null;
 };
+
+export function fotoCategoriaTitulo(categoria?: string | null) {
+  const titulos: Record<string, string> = {
+    frente: "FRONTAL",
+    lateral_direita: "LATERAL DIREITA",
+    lateral_esquerda: "LATERAL ESQUERDA",
+    traseira: "TRASEIRA",
+    painel: "PAINEL",
+    equipamentos: "ESTEPE / CHAVE DE RODA / MACACO / TRIÂNGULO",
+    avarias: "AVARIAS",
+  };
+
+  return categoria ? titulos[categoria] ?? categoria.replaceAll("_", " ").toUpperCase() : "FOTO";
+}
 
 const checklistLabels: Record<string, string> = {
   km_atual: "KM",
@@ -219,31 +234,98 @@ export async function generateRegistroPdf(
       field("Registrado por", display(registro.responsavel));
     }
 
-    // Fotos (somente se houver)
+    // Fotos: categorias obrigatórias em página própria.
+    // Avarias ficam agrupadas em uma seção própria.
     const fotosOk = fotos.filter((f) => f.bytes && f.bytes.length);
     if (fotosOk.length) {
-      section("Fotos");
-      const maxImgWidth = pageWidth;
-      const maxImgHeight = 320;
-      fotosOk.forEach((foto, index) => {
-        try {
-          if (doc.y + maxImgHeight > doc.page.height - doc.page.margins.bottom - 20) {
-            doc.addPage();
-          }
-          doc.image(foto.bytes, {
-            fit: [maxImgWidth, maxImgHeight],
+      const fotosNormais = fotosOk.filter((foto) => foto.categoria !== "avarias");
+      const fotosAvarias = fotosOk.filter((foto) => foto.categoria === "avarias");
+
+      for (const foto of fotosNormais) {
+        doc.addPage();
+
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(18)
+          .fillColor("#111111")
+          .text(fotoCategoriaTitulo(foto.categoria), {
             align: "center",
           });
-          if (foto.descricao) {
-            doc.fontSize(8).fillColor("#666666").text(foto.descricao, { align: "center" });
-          }
-          // Espaco entre fotos, mas nao apos a ultima (evita pagina em branco final).
-          if (index < fotosOk.length - 1) doc.moveDown(0.6);
-        } catch {
-          doc.fontSize(9).fillColor("#999999").text("(Não foi possível incluir uma foto.)");
-          if (index < fotosOk.length - 1) doc.moveDown(0.4);
+
+        doc.moveDown(1);
+
+        if (foto.descricao) {
+          doc
+            .font("Helvetica")
+            .fontSize(9)
+            .fillColor("#666666")
+            .text(foto.descricao, { align: "center" });
+
+          doc.moveDown(0.8);
         }
-      });
+
+        const availableHeight =
+          doc.page.height -
+          doc.page.margins.bottom -
+          doc.y -
+          15;
+
+        doc.image(foto.bytes, doc.page.margins.left, doc.y, {
+          fit: [pageWidth, availableHeight],
+          align: "center",
+          valign: "center",
+        });
+      }
+
+      if (fotosAvarias.length) {
+        doc.addPage();
+
+        doc
+          .font("Helvetica-Bold")
+          .fontSize(18)
+          .fillColor("#111111")
+          .text("AVARIAS", { align: "center" });
+
+        doc.moveDown(1);
+
+        for (const [index, foto] of fotosAvarias.entries()) {
+          const maxImgHeight = 300;
+
+          if (
+            doc.y + maxImgHeight >
+            doc.page.height - doc.page.margins.bottom
+          ) {
+            doc.addPage();
+
+            doc
+              .font("Helvetica-Bold")
+              .fontSize(18)
+              .fillColor("#111111")
+              .text("AVARIAS", { align: "center" });
+
+            doc.moveDown(1);
+          }
+
+          if (foto.descricao) {
+            doc
+              .font("Helvetica")
+              .fontSize(9)
+              .fillColor("#666666")
+              .text(foto.descricao, { align: "center" });
+
+            doc.moveDown(0.5);
+          }
+
+          doc.image(foto.bytes, {
+            fit: [pageWidth, maxImgHeight],
+            align: "center",
+          });
+
+          if (index < fotosAvarias.length - 1) {
+            doc.moveDown(1);
+          }
+        }
+      }
     }
 
     drawFooter();
