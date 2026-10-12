@@ -148,7 +148,7 @@ function isViaturaDraft(value: unknown): value is ViaturaDraft {
 
 export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
   finalViatura?: ViaturaDraft & { id: string };
-  onFinalSaved?: () => void;
+  onFinalSaved?: (registroId: string) => void;
 } = {}) {
   const router = useRouter();
   const [loaded, setLoaded] = useState(Boolean(finalViatura));
@@ -164,6 +164,34 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
   const [isPreparingPhotos, setIsPreparingPhotos] = useState(false);
   const preparingPhotosRef = useRef(false);
   const userIdRef = useRef<string | null>(null);
+  const lifecycleRef = useRef(0);
+
+  useEffect(() => {
+    if (!finalViatura) return;
+    function discard() {
+      lifecycleRef.current += 1;
+      setAnswers({});
+      setObservacoes("");
+      setPhotos([]);
+      setPhotoError(null);
+      setSubmitError(null);
+      setCompleted(false);
+      setIsSubmitting(false);
+      preparingPhotosRef.current = false;
+      setIsPreparingPhotos(false);
+    }
+    function restore(event: PageTransitionEvent) {
+      if (event.persisted) discard();
+    }
+    discard();
+    window.addEventListener("pagehide", discard);
+    window.addEventListener("pageshow", restore);
+    return () => {
+      discard();
+      window.removeEventListener("pagehide", discard);
+      window.removeEventListener("pageshow", restore);
+    };
+  }, [finalViatura]);
 
   useEffect(() => {
     if (finalViatura) return;
@@ -181,7 +209,11 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
           const parsedCheckin = loadDraft<Partial<CheckinDraft>>(uid, checkinDraftScope);
           if (parsedCheckin) {
             if (parsedCheckin.answers && typeof parsedCheckin.answers === "object") {
-              setAnswers(parsedCheckin.answers);
+              const restoredAnswers = { ...parsedCheckin.answers };
+              if (restoredAnswers.km_atual !== undefined && !/^[0-9]*$/.test(restoredAnswers.km_atual)) {
+                delete restoredAnswers.km_atual;
+              }
+              setAnswers(restoredAnswers);
             }
             if (typeof parsedCheckin.observacoes === "string") {
               setObservacoes(parsedCheckin.observacoes);
@@ -224,6 +256,7 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
   }
 
   function updateAnswer(name: string, value: string) {
+    if (name === "km_atual" && !/^[0-9]*$/.test(value)) return;
     const nextAnswers = { ...answers, [name]: value };
     setAnswers(nextAnswers);
     persistCheckin(nextAnswers, observacoes, photos);
@@ -243,11 +276,13 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
     preparingPhotosRef.current = true;
     setPhotoError(null);
     setIsPreparingPhotos(true);
+    const lifecycle = lifecycleRef.current;
 
     try {
       const selected = categoria === "avarias" ? files : files.slice(0, 1);
       const newPhotos: CheckinPhoto[] = [];
       for (const file of selected) newPhotos.push({ ...await createPhotoPreview(file), categoria });
+      if (lifecycle !== lifecycleRef.current) return;
       const nextPhotos = categoria === "avarias" ? [...photos, ...newPhotos] :
         [...photos.filter((photo) => photo.categoria !== categoria), ...newPhotos];
       setPhotos(nextPhotos);
@@ -255,10 +290,13 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
       setCompleted(false);
       setSubmitError(null);
     } catch {
+      if (lifecycle !== lifecycleRef.current) return;
       setPhotoError("Não foi possível preparar uma das imagens. Tente outra foto.");
     } finally {
-      preparingPhotosRef.current = false;
-      setIsPreparingPhotos(false);
+      if (lifecycle === lifecycleRef.current) {
+        preparingPhotosRef.current = false;
+        setIsPreparingPhotos(false);
+      }
     }
   }
 
@@ -278,6 +316,7 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
     // O envio usa os dados em memória mesmo quando o armazenamento está cheio.
     persistCheckin(answers, observacoes, photos);
 
+    const lifecycle = lifecycleRef.current;
     setIsSubmitting(true);
     setCompleted(false);
     setSubmitError(null);
@@ -294,29 +333,29 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
           checkin: { answers, observacoes, photos },
         }),
       });
+      if (lifecycle !== lifecycleRef.current) {
+        return;
+      }
       if (!response.ok) {
         const errorData = (await response.json().catch(() => null)) as
           | Record<string, unknown>
           | null;
+        if (lifecycle !== lifecycleRef.current) return;
         console.error("Erro cadastro VTR:", errorData);
-        setSubmitError(
-          JSON.stringify(
-            {
-              message: errorData?.message ?? "não informado",
-              code: errorData?.code ?? "não informado",
-              details: errorData?.details ?? "não informado",
-              hint: errorData?.hint ?? "não informado",
-            },
-            null,
-            2,
-          ),
-        );
+        setSubmitError(typeof errorData?.message === "string" ? errorData.message : "Não foi possível salvar a vistoria. Tente novamente.");
         return;
       }
 
       if (finalViatura) {
+        const result = await response.json().catch(() => null);
+        if (lifecycle !== lifecycleRef.current) return;
+        if (typeof result?.registroId !== "string") {
+          setSubmitError("A vistoria foi salva, mas não foi possível confirmar sua identificação. Atualize a página para continuar.");
+          router.refresh();
+          return;
+        }
         setCompleted(true);
-        onFinalSaved?.();
+        onFinalSaved?.(result.registroId);
         return;
       }
       if (userIdRef.current) {
@@ -329,11 +368,12 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
         router.refresh();
       }, 900);
     } catch {
+      if (lifecycle !== lifecycleRef.current) return;
       setSubmitError(
         "Não foi possível conectar ao sistema. Mantenha esta página aberta e tente novamente.",
       );
     } finally {
-      setIsSubmitting(false);
+      if (lifecycle === lifecycleRef.current) setIsSubmitting(false);
     }
   }
 
@@ -355,7 +395,7 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
   const otherItems = viatura.tipo === "Viatura" ? carOtherItems : motorcycleOtherItems;
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-7">
+    <form onSubmit={handleSubmit} autoComplete={finalViatura ? "off" : undefined} className="space-y-7">
       <div className="rounded-lg border border-white/10 bg-[#192222] p-5 sm:p-6">
         <p className="text-2xl font-bold tracking-[0.08em] text-[#f3f4ef]">
           {formatPlate(viatura.placa)}
@@ -373,9 +413,8 @@ export function InitialCheckinForm({ finalViatura, onFinalSaved }: {
             <input
               id="km_atual"
               name="km_atual"
-              type="number"
-              min="0"
-              step="1"
+              type="text"
+              pattern="[0-9]+"
               inputMode="numeric"
               required
               value={answers.km_atual ?? ""}

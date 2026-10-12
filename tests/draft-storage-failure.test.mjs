@@ -66,7 +66,7 @@ for (const file of ['initial-checkin-form', 'baixa-vtr-form', 'recebimento-ofici
         answers, photos, observacoes: 'observação', motivoObservacoes: 'manutenção',
         cpfDigits: '12345678901', reparosRealizados: 'Sim', descricaoReparos: 'freios',
         empresa: 'oficina', responsavelEntrega: 'teste',
-        persist: () => storageWorks, persistCheckin: () => storageWorks,
+        persist: () => storageWorks, persistCheckin: () => storageWorks, lifecycleRef: { current: 0 },
         setSubmitting() {}, setIsSubmitting() {}, setCompleted() {},
         setSaveError: value => errors.push(value), setSubmitError: value => errors.push(value),
         fetch: async (url, options) => { requests.push({ url, body: JSON.parse(options.body) }); throw new Error('offline'); },

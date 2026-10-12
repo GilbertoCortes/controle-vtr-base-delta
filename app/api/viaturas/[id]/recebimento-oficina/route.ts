@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
 import { kmRegressionMessage } from "@/lib/vtr-km";
-import { rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
+import { reconcileVtrOperation, rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
 
 const conditionOptions = ["OK", "Ruim"];
 const possessionOptions = ["Possui", "Não possui"];
@@ -114,13 +114,18 @@ export async function POST(
     return NextResponse.json({ message: "Não foi possível ler os dados do recebimento." }, { status: 400 });
   }
 
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return NextResponse.json({ message: "Solicitação inválida." }, { status: 400 });
+  }
+
   const answers = payload.answers;
   if (!answers || typeof answers !== "object" || Array.isArray(answers)) {
     return NextResponse.json({ message: "Preencha todos os campos obrigatórios." }, { status: 400 });
   }
   const values = answers as Record<string, unknown>;
   const km = Number(values.km_atual);
-  if (!Number.isSafeInteger(km) || km < 0) {
+  if ((typeof values.km_atual !== "string" && typeof values.km_atual !== "number") ||
+      !/^[0-9]+$/.test(String(values.km_atual)) || !Number.isSafeInteger(km) || km < 0 || km > 2147483647) {
     return NextResponse.json({ message: "Informe um KM atual válido." }, { status: 400 });
   }
 
@@ -242,32 +247,39 @@ export async function POST(
       caminhos_fotos: attemptedPaths,
     });
 
-    if (concluirError) {
-      if (concluirError.message === "KM_REGRESSION") {
-        const { data: atual } = await supabase
-          .from("viaturas")
-          .select("quilometragem")
-          .eq("id", viatura.id)
-          .maybeSingle();
-
-        if (atual && typeof atual.quilometragem === "number") {
-          return NextResponse.json(
-            { message: kmRegressionMessage(atual.quilometragem) },
-            { status: 409 },
-          );
-        }
-      }
-
-      throw concluirError;
-    }
+    if (concluirError) throw concluirError;
   } catch (error) {
+    const estado = await reconcileVtrOperation({
+      viaturaId: viatura.id, registroId, actorId: user.id, tipo: "recebimento",
+    });
+    if (estado === "registrada") {
+      revalidatePath(`/protected/viaturas/${id}`);
+      revalidatePath("/protected");
+      return NextResponse.json({ message: "VTR recebida da oficina com sucesso." }, { status: 201 });
+    }
+    if (estado === "desconhecida") {
+      return NextResponse.json({
+        message: "Não foi possível confirmar o resultado da operação. As fotos foram preservadas. Confira o histórico antes de tentar novamente; se a dúvida continuar, procure o suporte.",
+        ...errorFields(error),
+      }, { status: 503 });
+    }
     const rollbackSucceeded = await rollbackVtrOperation({
       viaturaId: viatura.id,
       registroId,
       attemptedPaths,
+      deleteCreatedRegistro: false,
     });
 
     console.error("Falha ao receber VTR da oficina", { error, rollbackSucceeded });
+    const reason = error && typeof error === "object" && "message" in error ? error.message : null;
+    if (rollbackSucceeded && reason === "KM_REGRESSION") {
+      const { data: atual } = await supabase.from("viaturas")
+        .select("quilometragem").eq("id", viatura.id).maybeSingle();
+      if (atual && typeof atual.quilometragem === "number") {
+        return NextResponse.json({ message: kmRegressionMessage(atual.quilometragem) }, { status: 409 });
+      }
+    }
+
 
     return NextResponse.json(
       {

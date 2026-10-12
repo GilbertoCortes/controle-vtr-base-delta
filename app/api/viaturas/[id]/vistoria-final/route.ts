@@ -42,7 +42,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   });
   if (beginError || typeof registroId !== "string") {
     console.error("Falha ao iniciar vistoria final", { id, error: beginError });
-    return NextResponse.json({ message: "Não foi possível iniciar a vistoria. Verifique o KM ou uma retirada já em andamento." }, { status: 409 });
+    const reason = beginError?.message ?? "";
+    const message = reason.includes("KM_REGRESSION")
+      ? "O KM da vistoria não pode ser menor que o KM atual da VTR."
+      : reason.includes("WITHDRAWAL_ALREADY_STARTED")
+        ? "Há uma retirada anterior em andamento. Abra a tela de exclusão para continuar ou cancelar essa retirada explicitamente."
+        : "Não foi possível iniciar a vistoria. Verifique o KM e tente novamente.";
+    return NextResponse.json({ message }, { status: 409 });
   }
   const attemptedPaths: string[] = [];
   try {

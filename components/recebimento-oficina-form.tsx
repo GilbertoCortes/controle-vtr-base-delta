@@ -151,6 +151,7 @@ export function RecebimentoOficinaForm({
   const router = useRouter();
   const draftScope = `recebimento-oficina:${viatura.id}`;
   const userIdRef = useRef<string | null>(null);
+  const lifecycleRef = useRef(0);
   const isViatura = viatura.tipo.trim().toLowerCase() === "viatura";
   const tires = isViatura
     ? [
@@ -217,6 +218,7 @@ export function RecebimentoOficinaForm({
     });
     return () => {
       active = false;
+      lifecycleRef.current += 1;
     };
   }, [draftScope]);
 
@@ -224,21 +226,15 @@ export function RecebimentoOficinaForm({
     const uid = userIdRef.current;
     if (!uid) return false;
     const ok = saveDraft(uid, draftScope, {
-      answers,
-      observacoes,
-      reparosRealizados,
-      descricaoReparos,
-      empresa,
-      responsavelEntrega,
-      cpfDigits,
-      photos,
-      ...next,
+      answers, observacoes, reparosRealizados, descricaoReparos,
+      empresa, responsavelEntrega, cpfDigits, photos, ...next,
     });
     setStorageError(!ok);
     return ok;
   }
 
   function updateAnswer(name: string, value: string) {
+    if (name === "km_atual" && !/^[0-9]*$/.test(value)) return;
     const nextAnswers = { ...answers, [name]: value };
     setAnswers(nextAnswers);
     persist({ answers: nextAnswers });
@@ -248,11 +244,14 @@ export function RecebimentoOficinaForm({
   async function addPhotos(files: File[]) {
     if (!files.length) return;
     setPhotoError(null);
+    const lifecycle = lifecycleRef.current;
     try {
       const nextPhotos = [...photos, ...(await Promise.all(files.map(preparePhoto)))];
+      if (lifecycle !== lifecycleRef.current) return;
       setPhotos(nextPhotos);
       persist({ photos: nextPhotos });
     } catch {
+      if (lifecycle !== lifecycleRef.current) return;
       setPhotoError("Não foi possível preparar uma das imagens. Tente outra foto.");
     }
   }
@@ -274,9 +273,9 @@ export function RecebimentoOficinaForm({
       setSaveError("Descreva os reparos realizados.");
       return;
     }
-    // O envio usa os dados em memória mesmo quando o armazenamento está cheio.
-    persist({ cpfDigits });
 
+    persist({ cpfDigits });
+    const lifecycle = lifecycleRef.current;
     setSubmitting(true);
     setSaveError(null);
     try {
@@ -294,8 +293,10 @@ export function RecebimentoOficinaForm({
           photos,
         }),
       });
+      if (lifecycle !== lifecycleRef.current) return;
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
+        if (lifecycle !== lifecycleRef.current) return;
         setSaveError(formatApiError(errorData));
         return;
       }
@@ -317,13 +318,15 @@ export function RecebimentoOficinaForm({
 
       setCompleted(true);
       window.setTimeout(() => {
+        if (lifecycle !== lifecycleRef.current) return;
         router.replace(`/protected/viaturas/${viatura.id}`);
         router.refresh();
       }, 900);
     } catch {
+      if (lifecycle !== lifecycleRef.current) return;
       setSaveError("Não foi possível conectar ao sistema. Mantenha esta página aberta e tente novamente.");
     } finally {
-      setSubmitting(false);
+      if (lifecycle === lifecycleRef.current) setSubmitting(false);
     }
   }
 
@@ -332,7 +335,7 @@ export function RecebimentoOficinaForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-7">
+    <form onSubmit={handleSubmit} autoComplete="off" className="space-y-7">
       <div className="grid grid-cols-1 gap-3 rounded-lg border border-white/10 bg-[#192222] p-5 sm:grid-cols-2">
         <p className="text-lg font-bold tracking-[0.06em] text-[#f3f4ef]">{formatPlate(viatura.placa)}</p>
         <p className="text-sm text-[#bdc9c3]">Tipo: {viatura.tipo}</p>
@@ -346,9 +349,8 @@ export function RecebimentoOficinaForm({
             KM atual <span className="text-[#d5b45b]">*</span>
             <input
               id="km-recebimento"
-              type="number"
-              min="0"
-              step="1"
+              type="text"
+              pattern="[0-9]+"
               inputMode="numeric"
               required
               value={answers.km_atual ?? ""}

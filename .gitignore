@@ -43,3 +43,9 @@ next-env.d.ts
 /dist/
 .vinext/
 .cloudflare/
+
+# Local notes and generated previews
+/.claude/
+/output/
+*.tmp
+*.temp

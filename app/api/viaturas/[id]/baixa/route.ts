@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { NextResponse } from "next/server";
 import { requireActiveSession } from "@/lib/supabase/admin";
 import { kmRegressionMessage } from "@/lib/vtr-km";
-import { rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
+import { reconcileVtrOperation, rollbackVtrOperation } from "@/lib/rollback-vtr-operation";
 
 const photoBucket = "fotos-vtr";
 const conditionOptions = ["OK", "Ruim"];
@@ -112,6 +112,10 @@ export async function POST(
     return NextResponse.json({ message: "Não foi possível ler os dados da baixa." }, { status: 400 });
   }
 
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return NextResponse.json({ message: "Solicitação inválida." }, { status: 400 });
+  }
+
   const answers = payload.answers;
   const motivo = typeof payload.motivoObservacoes === "string"
     ? payload.motivoObservacoes.trim()
@@ -125,7 +129,8 @@ export async function POST(
 
   const checkinAnswers = answers as Record<string, unknown>;
   const km = Number(checkinAnswers.km_atual);
-  if (!Number.isSafeInteger(km) || km < 0) {
+  if ((typeof checkinAnswers.km_atual !== "string" && typeof checkinAnswers.km_atual !== "number") ||
+      !/^[0-9]+$/.test(String(checkinAnswers.km_atual)) || !Number.isSafeInteger(km) || km < 0 || km > 2147483647) {
     return NextResponse.json({ message: "Informe um KM atual válido." }, { status: 400 });
   }
 
@@ -229,34 +234,45 @@ export async function POST(
       caminhos_fotos: attemptedPaths,
     });
 
-    if (concluirError) {
-      if (concluirError.message === "KM_REGRESSION") {
-        const { data: atual } = await supabase
-          .from("viaturas")
-          .select("quilometragem")
-          .eq("id", viatura.id)
-          .maybeSingle();
-
-        if (atual && typeof atual.quilometragem === "number") {
-          return NextResponse.json(
-            { message: kmRegressionMessage(atual.quilometragem) },
-            { status: 409 },
-          );
-        }
-      }
-
-      throw concluirError;
-    }
+    if (concluirError) throw concluirError;
   } catch (error) {
-    // Se a RPC falhou, a transação PostgreSQL já foi revertida.
-    // O rollback aqui serve principalmente para remover uploads temporários.
+    const estado = await reconcileVtrOperation({
+      viaturaId: viatura.id, registroId, actorId: user.id, tipo: "baixa",
+    });
+    if (estado === "registrada") {
+      revalidatePath(`/protected/viaturas/${id}`);
+      revalidatePath("/protected");
+      return NextResponse.json({ message: "VTR baixada com sucesso." }, { status: 201 });
+    }
+    if (estado === "desconhecida") {
+      return NextResponse.json({
+        message: "Não foi possível confirmar o resultado da operação. As fotos foram preservadas. Confira o histórico antes de tentar novamente; se a dúvida continuar, procure o suporte.",
+        ...errorFields(error),
+      }, { status: 503 });
+    }
     const rollbackSucceeded = await rollbackVtrOperation({
       viaturaId: viatura.id,
       registroId,
       attemptedPaths,
+      deleteCreatedRegistro: false,
     });
 
     console.error("Falha ao baixar VTR", { error, rollbackSucceeded });
+
+    const reason = error && typeof error === "object" && "message" in error ? error.message : null;
+    if (rollbackSucceeded && reason === "ATIVIDADE_ABERTA") {
+      return NextResponse.json({
+        message: "Esta VTR já possui uma atividade de baixa sem recebimento registrado. Confira o histórico antes de iniciar outra baixa. Se ela aparece como ATIVA, a situação e o histórico estão inconsistentes e precisam ser revisados. Os dados do formulário foram preservados.",
+        ...errorFields(error),
+      }, { status: 409 });
+    }
+    if (rollbackSucceeded && reason === "KM_REGRESSION") {
+      const { data: atual } = await supabase.from("viaturas")
+        .select("quilometragem").eq("id", viatura.id).maybeSingle();
+      if (atual && typeof atual.quilometragem === "number") {
+        return NextResponse.json({ message: kmRegressionMessage(atual.quilometragem) }, { status: 409 });
+      }
+    }
 
     return NextResponse.json(
       {

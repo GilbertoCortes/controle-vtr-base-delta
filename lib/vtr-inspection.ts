@@ -54,7 +54,7 @@ export function validateInspectionAnswers(value: unknown, tipo: VtrType): string
   if (!value || typeof value !== "object" || Array.isArray(value)) return "Preencha todos os itens obrigatórios da vistoria.";
   const answers = value as Record<string, unknown>;
   if ((typeof answers.km_atual !== "string" && typeof answers.km_atual !== "number") ||
-      String(answers.km_atual).trim() === "" || !Number.isInteger(Number(answers.km_atual)) ||
+      !/^[0-9]+$/.test(String(answers.km_atual)) || !Number.isInteger(Number(answers.km_atual)) ||
       Number(answers.km_atual) < 0 || Number(answers.km_atual) > 2147483647) return "Informe um KM atual válido.";
   for (const [field, options] of Object.entries(inspectionFields(tipo))) {
     if (typeof answers[field] !== "string" || !options.includes(answers[field])) return "Preencha todos os itens obrigatórios da vistoria, incluindo Pintura e Lataria.";

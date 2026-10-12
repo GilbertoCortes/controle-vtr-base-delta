@@ -8,7 +8,7 @@ import {
   viaturaDraftScope,
 } from "@/lib/vtr-draft";
 import { getDraftUserId, loadDraft, saveDraft } from "@/lib/draft-storage";
-import { isStrictMercosulPlate } from "@/lib/plate";
+import { isMercosulPlatePrefix, isStrictMercosulPlate } from "@/lib/plate";
 
 export function NewViaturaForm() {
   const router = useRouter();
@@ -27,7 +27,7 @@ export function NewViaturaForm() {
       if (!draft) return;
       if (typeof draft.placa === "string") {
         const canon = draft.placa.toUpperCase();
-        setPlaca(canon);
+        if (isMercosulPlatePrefix(canon)) setPlaca(canon);
       }
       if (draft.tipo === "Viatura" || draft.tipo === "Motocicleta") {
         setTipo(draft.tipo);
@@ -76,9 +76,13 @@ export function NewViaturaForm() {
           inputMode="text"
           autoCapitalize="characters"
           autoComplete="off"
+          maxLength={7}
+          pattern="[A-Za-z]{3}[0-9][A-Za-z][0-9]{2}"
+          placeholder="ABC1D23"
           value={placa}
           onChange={(event) => {
             const canon = event.target.value.toUpperCase();
+            if (!isMercosulPlatePrefix(canon)) return;
             setPlaca(canon);
             persistDraft({ placa: canon, tipo });
           }}

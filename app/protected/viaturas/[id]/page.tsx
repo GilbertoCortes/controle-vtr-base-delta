@@ -404,7 +404,7 @@ async function ViaturaDetailsContent({
             VTR {formatPlate(viatura.placa)}
           </h1>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex w-full items-center justify-between gap-4">
           {isAtiva && (
             <Link
               href={`/protected/viaturas/${viatura.id}/baixa`}
@@ -422,10 +422,12 @@ async function ViaturaDetailsContent({
             </Link>
           )}
           {isAdmin && (
-            <DeleteViaturaButton
-              isAdmin={isAdmin}
-              viaturaId={viatura.id}
-            />
+            <div className="ml-auto flex shrink-0 justify-end">
+              <DeleteViaturaButton
+                isAdmin={isAdmin}
+                viaturaId={viatura.id}
+              />
+            </div>
           )}
         </div>
       </div>

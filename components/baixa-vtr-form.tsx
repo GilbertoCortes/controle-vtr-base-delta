@@ -135,6 +135,7 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
   const router = useRouter();
   const draftScope = `baixa:${viatura.id}`;
   const userIdRef = useRef<string | null>(null);
+  const lifecycleRef = useRef(0);
   const isViatura = viatura.tipo.trim().toLowerCase() === "viatura";
   const tires = isViatura
     ? [
@@ -179,9 +180,7 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
           const draft = loadDraft<Partial<RascunhoBaixa>>(uid, draftScope);
           if (draft) {
             if (draft.answers && typeof draft.answers === "object") setAnswers(draft.answers);
-            if (typeof draft.motivoObservacoes === "string") {
-              setMotivoObservacoes(draft.motivoObservacoes);
-            }
+            if (typeof draft.motivoObservacoes === "string") setMotivoObservacoes(draft.motivoObservacoes);
             if (Array.isArray(draft.photos)) setPhotos(draft.photos);
           }
         }
@@ -193,6 +192,7 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
     });
     return () => {
       active = false;
+      lifecycleRef.current += 1;
     };
   }, [draftScope]);
 
@@ -205,6 +205,7 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
   }
 
   function updateAnswer(name: string, value: string) {
+    if (name === "km_atual" && !/^[0-9]*$/.test(value)) return;
     const nextAnswers = { ...answers, [name]: value };
     setAnswers(nextAnswers);
     persist(nextAnswers, motivoObservacoes, photos);
@@ -215,11 +216,14 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
   async function addPhotos(files: File[]) {
     if (!files.length) return;
     setPhotoError(null);
+    const lifecycle = lifecycleRef.current;
     try {
       const nextPhotos = [...photos, ...(await Promise.all(files.map(preparePhoto)))];
+      if (lifecycle !== lifecycleRef.current) return;
       setPhotos(nextPhotos);
       persist(answers, motivoObservacoes, nextPhotos);
     } catch {
+      if (lifecycle !== lifecycleRef.current) return;
       setPhotoError("Não foi possível preparar uma das imagens. Tente outra foto.");
     }
   }
@@ -234,9 +238,9 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
     event.preventDefault();
     if (submitting || completed) return;
     const motivo = motivoObservacoes.trim();
-    // O envio usa os dados em memória mesmo quando o armazenamento está cheio.
     persist(answers, motivo, photos);
 
+    const lifecycle = lifecycleRef.current;
     setSubmitting(true);
     setSaveError(null);
     try {
@@ -245,8 +249,10 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answers, motivoObservacoes: motivo, photos }),
       });
+      if (lifecycle !== lifecycleRef.current) return;
       if (!response.ok) {
         const data = await response.json().catch(() => null);
+        if (lifecycle !== lifecycleRef.current) return;
         setSaveError(formatApiError(data));
         return;
       }
@@ -263,13 +269,15 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
 
       setCompleted(true);
       window.setTimeout(() => {
+        if (lifecycle !== lifecycleRef.current) return;
         router.replace(`/protected/viaturas/${viatura.id}`);
         router.refresh();
       }, 900);
     } catch {
+      if (lifecycle !== lifecycleRef.current) return;
       setSaveError("Não foi possível conectar ao sistema. Mantenha esta página aberta e tente novamente.");
     } finally {
-      setSubmitting(false);
+      if (lifecycle === lifecycleRef.current) setSubmitting(false);
     }
   }
 
@@ -278,7 +286,7 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-7">
+    <form onSubmit={handleSubmit} autoComplete="off" className="space-y-7">
       <div className="grid grid-cols-1 gap-3 rounded-lg border border-white/10 bg-[#192222] p-5 sm:grid-cols-2">
         <p className="text-lg font-bold tracking-[0.06em] text-[#f3f4ef]">{formatPlate(viatura.placa)}</p>
         <p className="text-sm text-[#bdc9c3]">Tipo: {viatura.tipo}</p>
@@ -292,9 +300,8 @@ export function BaixaVtrForm({ viatura }: { viatura: ViaturaInfo }) {
             KM atual <span className="text-[#d5b45b]">*</span>
             <input
               id="km-baixa"
-              type="number"
-              min="0"
-              step="1"
+              type="text"
+              pattern="[0-9]+"
               inputMode="numeric"
               required
               value={answers.km_atual ?? ""}

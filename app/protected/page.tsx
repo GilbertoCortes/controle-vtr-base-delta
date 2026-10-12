@@ -48,18 +48,25 @@ async function ProtectedContent() {
           {viaturas.map((viatura) => {
             const situacao = viatura.situacao.trim().toUpperCase();
             const isActive = situacao === "ATIVA";
+            const isBaixada = situacao === "BAIXADA";
             const isMoto = viatura.tipo.trim().toLowerCase() === "motocicleta";
 
             return (
               <li
                 key={viatura.id}
-                className="flex items-center gap-2 rounded-lg border border-white/10 bg-[#192222] p-3 md:gap-3"
+                className={`flex items-center gap-2 rounded-lg border p-3 md:gap-3 ${
+                  isBaixada ? "border-[#bd4c4b]/40 bg-[#bd4c4b]/10" : "border-white/10 bg-[#192222]"
+                }`}
               >
                 <Link
                   href={`/protected/viaturas/${viatura.id}`}
                   prefetch={false}
                   aria-label={`Abrir VTR ${formatPlate(viatura.placa)}`}
-                  className="flex min-h-16 min-w-0 flex-1 items-center rounded-md border border-[#40514c] bg-[#111919] px-2 text-[19px] font-bold tracking-[0.08em] text-[#f3f4ef] transition-colors hover:border-[#d5b45b] hover:bg-[#202b28] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d5b45b] md:px-4"
+                  className={`flex min-h-16 min-w-0 flex-1 items-center rounded-md border px-2 text-[19px] font-bold tracking-[0.08em] text-[#f3f4ef] transition-colors focus-visible:outline-none focus-visible:ring-2 md:px-4 ${
+                    isBaixada
+                      ? "border-[#bd4c4b]/50 bg-[#bd4c4b]/10 hover:border-[#bd4c4b] hover:bg-[#bd4c4b]/20 focus-visible:ring-[#ef9691]"
+                      : "border-[#40514c] bg-[#111919] hover:border-[#d5b45b] hover:bg-[#202b28] focus-visible:ring-[#d5b45b]"
+                  }`}
                 >
                   <Image
                     src={isMoto ? "/moto.png" : "/carro.png"}

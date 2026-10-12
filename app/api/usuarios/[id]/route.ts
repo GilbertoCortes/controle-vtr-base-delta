@@ -18,7 +18,7 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ message: "Solicitação inválida." }, { status: 400 });
   }
-  if (typeof body.ativo !== "boolean") {
+  if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.ativo !== "boolean") {
     return NextResponse.json({ message: "Estado de acesso inválido." }, { status: 400 });
   }
 

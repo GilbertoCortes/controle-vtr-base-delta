@@ -11,14 +11,16 @@ async function WithdrawalContent({ params }: { params: Promise<{ id: string }> }
   const { id } = await params;
   const client = createSupabaseAdminClient();
   const { data: viatura, error } = await client.from("viaturas").select("id, placa, tipo").eq("id", id).maybeSingle();
-  const { data: withdrawal, error: withdrawalError } = await client.from("retiradas_vtr").select("fase").eq("viatura_id", id).maybeSingle();
+  const { data: withdrawal, error: withdrawalError } = await client.from("retiradas_vtr").select("registro_id, fase").eq("viatura_id", id).maybeSingle();
   if (error || withdrawalError || !viatura || (viatura.tipo !== "Viatura" && viatura.tipo !== "Motocicleta")) {
     return <p role="alert" className="text-sm text-[#f0aaa2]">Não foi possível carregar a retirada desta VTR.</p>;
   }
   return (
     <section className="mx-auto w-full max-w-3xl space-y-6">
       <h1 className="border-b border-white/10 pb-5 text-2xl font-semibold text-[#f3f4ef]">VISTORIA FINAL DE RETIRADA</h1>
-      <FinalWithdrawal viatura={{ id, placa: viatura.placa, tipo: viatura.tipo, situacao: "ativa" }} hasFinal={Boolean(withdrawal)} />
+      <FinalWithdrawal key={`${withdrawal?.registro_id ?? "nova"}:${withdrawal?.fase ?? "nova"}`}
+        viatura={{ id, placa: viatura.placa, tipo: viatura.tipo, situacao: "ativa" }}
+        withdrawal={withdrawal ? { registroId: withdrawal.registro_id, fase: withdrawal.fase } : null} />
     </section>
   );
 }

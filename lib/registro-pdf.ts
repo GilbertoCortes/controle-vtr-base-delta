@@ -1,6 +1,14 @@
 import PDFDocument from "pdfkit";
 import { formatPlate } from "@/lib/plate";
 
+export const vtrPdfColors = {
+  navy: "#172B40",
+  text: "#1B3046",
+  muted: "#53667A",
+  stripe: "#EEF2F6",
+  line: "#DCE4EB",
+};
+
 export type RegistroPdfData = {
   tipoRegistro: string;
   atividadeNumero: number | null;
@@ -44,6 +52,8 @@ export function fotoCategoriaTitulo(categoria?: string | null) {
 }
 
 const checklistLabels: Record<string, string> = {
+  pintura: "Pintura",
+  lataria: "Lataria",
   km_atual: "KM",
   combustivel: "Combustível",
   oleo_motor: "Óleo do motor",
@@ -95,8 +105,51 @@ function tipoRegistroLabel(value: string) {
   if (value === "checkin_inicial") return "Check-in/Entrada de VTR";
   if (value === "baixa") return "Baixa";
   if (value === "recebimento") return "Recebimento da Oficina";
+  if (value === "vistoria_final") return "Vistoria Final de Retirada";
   if (value === "remocao_base") return "Removida da Base Delta";
   return value;
+}
+
+export function drawVtrPdfHeader(doc: PDFKit.PDFDocument, title: string, subtitle: string) {
+  const x = doc.page.margins.left;
+  const width = doc.page.width - x - doc.page.margins.right;
+  doc.font("Helvetica").fontSize(8).fillColor(vtrPdfColors.muted)
+    .text("SEGURANÇA PRESENTE | BASE DELTA", x, doc.y, { width, align: "center" });
+  doc.moveDown(0.55);
+  doc.font("Helvetica-Bold").fontSize(17).fillColor(vtrPdfColors.navy)
+    .text(title.toUpperCase(), x, doc.y, { width, align: "center" });
+  doc.moveDown(0.35);
+  doc.font("Helvetica").fontSize(9).fillColor(vtrPdfColors.muted)
+    .text(subtitle, x, doc.y, { width, align: "center" });
+  doc.moveDown(1.4);
+}
+
+export function drawVtrPdfSection(doc: PDFKit.PDFDocument, title: string) {
+  if (doc.y > doc.page.height - 115) doc.addPage();
+  const x = doc.page.margins.left;
+  const width = doc.page.width - x - doc.page.margins.right;
+  doc.moveDown(0.55);
+  doc.font("Helvetica-Bold").fontSize(11).fillColor(vtrPdfColors.navy).text(title.toUpperCase(), x, doc.y, { width });
+  doc.moveDown(0.65);
+}
+
+export function drawVtrPdfRow(doc: PDFKit.PDFDocument, label: string, value: string, striped: boolean) {
+  const x = doc.page.margins.left;
+  const width = doc.page.width - x - doc.page.margins.right;
+  const labelWidth = Math.round(width * 0.32);
+  const valueWidth = width - labelWidth - 28;
+  doc.font("Helvetica").fontSize(9);
+  const labelHeight = doc.heightOfString(label, { width: labelWidth - 16 });
+  const valueHeight = doc.heightOfString(value, { width: valueWidth });
+  const height = Math.max(24, Math.ceil(Math.max(labelHeight, valueHeight)) + 10);
+  if (doc.y + height > doc.page.height - 75) doc.addPage();
+  const y = doc.y;
+  if (striped) doc.rect(x, y, width, height).fill(vtrPdfColors.stripe);
+  doc.font("Helvetica").fontSize(9).fillColor(vtrPdfColors.text)
+    .text(label, x + 9, y + 6, { width: labelWidth - 16 });
+  doc.text(value, x + labelWidth + 9, y + 6, { width: valueWidth });
+  doc.y = y + height;
+  doc.x = x;
 }
 
 function sanitizeFilePart(value: string) {
@@ -108,6 +161,7 @@ function tipoSlug(value: string) {
   if (value === "checkin_inicial") return "CHECK-IN";
   if (value === "baixa") return "BAIXA";
   if (value === "recebimento") return "RECEBIMENTO";
+  if (value === "vistoria_final") return "VISTORIA-FINAL";
   if (value === "remocao_base") return "REMOCAO";
   return sanitizeFilePart(value) || "REGISTRO";
 }
@@ -130,7 +184,7 @@ export async function generateRegistroPdf(
   fotos: FotoPdfData[],
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margins: { top: 50, bottom: 70, left: 50, right: 50 } });
+    const doc = new PDFDocument({ size: "A4", bufferPages: true, margins: { top: 45, bottom: 65, left: 46, right: 46 } });
     const chunks: Buffer[] = [];
     doc.on("data", (c: Buffer) => chunks.push(c));
     doc.on("end", () => resolve(Buffer.concat(chunks)));
@@ -138,54 +192,49 @@ export async function generateRegistroPdf(
 
     const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const geradoEm = new Date();
-    const rodape = `Controle de VTR – Base Delta  ·  Documento gerado em ${new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(geradoEm)} às ${new Intl.DateTimeFormat("pt-BR", { timeStyle: "short" }).format(geradoEm)}`;
+    const rodape = `SEGURANÇA PRESENTE | BASE DELTA  ·  Gerado em ${new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(geradoEm)} às ${new Intl.DateTimeFormat("pt-BR", { timeStyle: "short" }).format(geradoEm)}`;
 
-    // Rodape desenhado em posicao absoluta SEM disparar nova pagina:
-    // remove temporariamente o listener pageAdded durante a escrita para que o
-    // texto no rodape nao crie pagina em branco nem recursao.
-    function drawFooter() {
+    function drawFooter(pageNumber: number, totalPages: number) {
       const contentY = doc.y;
       const contentX = doc.x;
-      doc.removeListener("pageAdded", drawFooter);
       const bottom = doc.page.height - 45;
-      doc.fontSize(8).fillColor("#666666").text(rodape, doc.page.margins.left, bottom, {
-        width: pageWidth,
+      doc.moveTo(doc.page.margins.left, bottom - 10).lineTo(doc.page.margins.left + pageWidth, bottom - 10).strokeColor(vtrPdfColors.line).stroke();
+      doc.font("Helvetica").fontSize(7).fillColor(vtrPdfColors.muted).text(rodape, doc.page.margins.left, bottom, {
+        width: pageWidth - 55,
         height: 12,
-        align: "center",
+        align: "left",
         lineBreak: false,
         ellipsis: true,
       });
+      doc.text(`Página ${pageNumber} / ${totalPages}`, doc.page.margins.left + pageWidth - 55, bottom, {
+        width: 55, height: 12, align: "right", lineBreak: false,
+      });
       doc.x = contentX;
       doc.y = contentY;
-      doc.on("pageAdded", drawFooter);
     }
-    doc.on("pageAdded", drawFooter);
 
-    // Cabecalho
-    doc.fontSize(16).fillColor("#111111").text("CONTROLE DE VTR – BASE DELTA", { align: "center" });
-    doc.moveDown(0.3);
-    doc.fontSize(11).fillColor("#444444").text("Relatório Operacional de Registro", { align: "center" });
-    doc.moveDown(1);
+    const reportTitle = registro.tipoRegistro === "checkin_inicial" ? "RELATÓRIO DE CHECK-IN INICIAL"
+      : registro.tipoRegistro === "vistoria_final" ? "RELATÓRIO DE VISTORIA FINAL"
+      : `RELATÓRIO DE ${tipoRegistroLabel(registro.tipoRegistro).toUpperCase()}`;
+    drawVtrPdfHeader(doc, reportTitle, `VIATURA · PLACA ${formatPlate(viatura.placa)}`);
+    let rowIndex = 0;
 
     function section(title: string) {
-      doc.moveDown(0.6);
-      doc.fontSize(12).fillColor("#111111").text(title, { underline: false });
-      doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.margins.left + pageWidth, doc.y).strokeColor("#cccccc").stroke();
-      doc.moveDown(0.4);
+      drawVtrPdfSection(doc, title);
+      rowIndex = 0;
     }
     function field(label: string, value: string) {
-      doc.fontSize(9).fillColor("#666666").text(label);
-      doc.fontSize(11).fillColor("#111111").text(value);
-      doc.moveDown(0.3);
+      drawVtrPdfRow(doc, label, value, rowIndex % 2 === 1);
+      rowIndex += 1;
     }
 
     // Identificacao da VTR
-    section("Identificação da VTR");
+    section("1. Identificação da VTR");
     field("Placa", formatPlate(viatura.placa));
     field("Tipo da VTR", display(viatura.tipo));
 
     // Identificacao do evento
-    section("Identificação do Evento");
+    section("2. Identificação do Evento");
     if (
       registro.atividadeNumero !== null &&
       (registro.tipoRegistro === "baixa" || registro.tipoRegistro === "recebimento")
@@ -200,7 +249,7 @@ export async function generateRegistroPdf(
     // Dados operacionais comuns
     const checklist = registro.checklist ?? {};
     const observacoes = checklist.observacoes;
-    section("Dados Operacionais");
+    section("3. Dados Operacionais");
     field("Combustível", display(registro.combustivel ?? checklist.combustivel));
     field("Óleo do motor", display(registro.oleoMotor ?? checklist.oleo_motor));
     field("Líquido de arrefecimento", display(registro.liquidoArrefecimento ?? checklist.liquido_arrefecimento));
@@ -222,7 +271,7 @@ export async function generateRegistroPdf(
     // Checklist completo
     const checklistItems = Object.entries(checklist).filter(([k]) => k !== "observacoes");
     if (checklistItems.length) {
-      section("Checklist");
+      section("4. Checklist");
       for (const [key, value] of checklistItems) {
         field(checklistLabels[key] ?? key.replaceAll("_", " "), display(value));
       }
@@ -230,7 +279,7 @@ export async function generateRegistroPdf(
 
     // Responsavel
     if (registro.responsavel) {
-      section("Responsável");
+      section("5. Responsável");
       field("Registrado por", display(registro.responsavel));
     }
 
@@ -243,22 +292,22 @@ export async function generateRegistroPdf(
 
       for (const foto of fotosNormais) {
         doc.addPage();
-
+        drawVtrPdfHeader(doc, reportTitle, `VIATURA · PLACA ${formatPlate(viatura.placa)}`);
         doc
           .font("Helvetica-Bold")
-          .fontSize(18)
-          .fillColor("#111111")
+          .fontSize(12)
+          .fillColor(vtrPdfColors.navy)
           .text(fotoCategoriaTitulo(foto.categoria), {
             align: "center",
           });
 
-        doc.moveDown(1);
+        doc.moveDown(0.7);
 
         if (foto.descricao) {
           doc
             .font("Helvetica")
             .fontSize(9)
-            .fillColor("#666666")
+            .fillColor(vtrPdfColors.muted)
             .text(foto.descricao, { align: "center" });
 
           doc.moveDown(0.8);
@@ -279,14 +328,14 @@ export async function generateRegistroPdf(
 
       if (fotosAvarias.length) {
         doc.addPage();
-
+        drawVtrPdfHeader(doc, reportTitle, `VIATURA · PLACA ${formatPlate(viatura.placa)}`);
         doc
           .font("Helvetica-Bold")
-          .fontSize(18)
-          .fillColor("#111111")
+          .fontSize(12)
+          .fillColor(vtrPdfColors.navy)
           .text("AVARIAS", { align: "center" });
 
-        doc.moveDown(1);
+        doc.moveDown(0.7);
 
         for (const [index, foto] of fotosAvarias.entries()) {
           const maxImgHeight = 300;
@@ -296,21 +345,21 @@ export async function generateRegistroPdf(
             doc.page.height - doc.page.margins.bottom
           ) {
             doc.addPage();
-
+            drawVtrPdfHeader(doc, reportTitle, `VIATURA · PLACA ${formatPlate(viatura.placa)}`);
             doc
               .font("Helvetica-Bold")
-              .fontSize(18)
-              .fillColor("#111111")
+              .fontSize(12)
+              .fillColor(vtrPdfColors.navy)
               .text("AVARIAS", { align: "center" });
 
-            doc.moveDown(1);
+            doc.moveDown(0.7);
           }
 
           if (foto.descricao) {
             doc
               .font("Helvetica")
               .fontSize(9)
-              .fillColor("#666666")
+                .fillColor(vtrPdfColors.muted)
               .text(foto.descricao, { align: "center" });
 
             doc.moveDown(0.5);
@@ -328,7 +377,11 @@ export async function generateRegistroPdf(
       }
     }
 
-    drawFooter();
+    const pages = doc.bufferedPageRange();
+    for (let page = pages.start; page < pages.start + pages.count; page += 1) {
+      doc.switchToPage(page);
+      drawFooter(page - pages.start + 1, pages.count);
+    }
     doc.end();
   });
 }

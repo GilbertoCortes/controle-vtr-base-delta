@@ -9,6 +9,15 @@
 
 const PLATE_PATTERN = /^[A-Z]{3}[0-9][A-Z][0-9]{2}$/;
 
+// Permite digitar a placa progressivamente, respeitando cada posição.
+export function isMercosulPlatePrefix(value: string): boolean {
+  const canonical = value.toUpperCase();
+  if (canonical.length > 7) return false;
+  return [...canonical].every((character, index) =>
+    (index < 3 || index === 4 ? /^[A-Z]$/ : /^[0-9]$/).test(character),
+  );
+}
+
 // Remove tudo que nao for letra/digito, converte para maiuscula e limita a 7.
 // Aceita entrada com/sem hifen, espacos ou minusculas. Uso: comparacao e banco.
 export function normalizePlate(value: string): string {
